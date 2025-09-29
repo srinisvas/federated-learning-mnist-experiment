@@ -1,0 +1,109 @@
+import json
+
+import torch
+
+from flwr.client import ClientApp, NumPyClient
+from flwr.common import Context, ConfigRecord
+from fed_learning_cifar_experiment.task import (get_weights, load_data, set_weights, test, train, get_resnet_cnn_model,
+                                                get_basic_cnn_model)
+from fed_learning_cifar_experiment.utils.evaluate_attack import evaluate_asr
+
+
+# Define Flower Client and client_fn
+
+class FlowerClient(NumPyClient):
+    def __init__(self, net, local_epochs, context: Context):
+        self.test_set = None
+        self.training_set = None
+        self.net = net
+        self.context = context
+        self.local_epochs = local_epochs
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.net.to(self.device)
+        self.client_state = context.state
+
+        if "num_backdoor_counts" not in self.client_state.config_records:
+            self.client_state.config_records["num_backdoor_counts"] = ConfigRecord({"count": 0})
+
+    def fit(self, parameters, config):
+        set_weights(self.net, parameters)
+        attack_mode = config.get("backdoor-attack-mode", "none").lower()
+        partition_id = self.context.node_config["partition-id"]
+        num_partitions = self.context.node_config["num-partitions"]
+        learning_rate = 0.1
+
+        if attack_mode == "global-attack-first" and partition_id == config["malicious-client-id"]:
+            num_malicious_clients = config["num-malicious-clients"]
+            attack_count = self.client_state.config_records["num_backdoor_counts"]["count"]
+            if attack_count < num_malicious_clients:
+                print("Global Attack In Progress #Client ID: " + str(partition_id))
+                self.training_set, _ = load_data(partition_id, num_partitions, alpha_val=0.9, backdoor_enabled=True)
+                self.client_state.config_records["num_backdoor_counts"]["count"] += 1
+                self.local_epochs = 5 # For adversarial training
+                learning_rate = 0.01 # For adversarial training
+                print("Incremented attack count to " + str(self.client_state.config_records["num_backdoor_counts"]))
+            else:
+                self.training_set, _ = load_data(partition_id, num_partitions, alpha_val=0.9)
+        elif attack_mode == "global-random-attack" and partition_id == config["malicious-client-id"]:
+            backdoor_rounds = json.loads(config["backdoor-rounds"])
+            print("Rounds Selected for Backdoor:" + str(backdoor_rounds))
+            current_round = config["current-round"]
+            if current_round in backdoor_rounds:
+                print("Global Random Attack Injected #Client ID: " + str(partition_id) + " #Round: " + str(current_round))
+                self.training_set, _ = load_data(partition_id, num_partitions, alpha_val=0.9, backdoor_enabled=True)
+                self.local_epochs = 5 # For adversarial training
+                learning_rate = 0.01 # For adversarial training
+            else:
+                self.training_set, _ = load_data(partition_id, num_partitions, alpha_val=0.9)
+        elif attack_mode == "per-round-attack":
+            backdoor_client_ids = json.loads(config["backdoor-client-ids"])
+            if partition_id in backdoor_client_ids:
+                print("Backdoor Attack Injected #Client ID: " + str(partition_id))
+                self.training_set, _ = load_data(partition_id, num_partitions, alpha_val=0.9, backdoor_enabled=True)
+                self.local_epochs = 5 # For adversarial training
+                learning_rate = 0.01 # For adversarial training
+            else:
+                self.training_set, _ = load_data(partition_id, num_partitions, alpha_val=0.9)
+        else:
+            self.training_set, _ = load_data(partition_id, num_partitions, alpha_val=0.9)
+
+        train_loss = train(
+            self.net,
+            self.training_set,
+            self.local_epochs,
+            self.device,
+            learning_rate
+        )
+        return (
+            get_weights(self.net),
+            len(self.training_set.dataset),
+            {"train_loss": train_loss},
+        )
+
+    def evaluate(self, parameters, config):
+        partition_id = self.context.node_config["partition-id"]
+        num_partitions = self.context.node_config["num-partitions"]
+        _, self.test_set = load_data(partition_id, num_partitions, alpha_val=0.9)
+        set_weights(self.net, parameters)
+        loss, accuracy = test(self.net, self.test_set, self.device)
+        # Evaluate Client Side Attack Success Rate
+        _, backdoored_test_set = load_data(partition_id, num_partitions, alpha_val=0.9, backdoor_enabled=True)
+        client_side_asr = evaluate_asr(self.net, backdoored_test_set, target_label=2, device=self.device)
+        return loss, len(self.test_set.dataset), {"mta": accuracy, "asr": client_side_asr}
+
+def client_fn(context: Context):
+
+    # Load the default model
+    #net = get_basic_cnn_model()
+    #Load the updated model(ResNet)
+    net = get_resnet_cnn_model()
+
+    local_epochs = context.run_config["local-epochs"]
+
+    # Return Client instance
+    return FlowerClient(net, local_epochs, context).to_client()
+
+# Flower ClientApp
+app = ClientApp(
+    client_fn,
+)

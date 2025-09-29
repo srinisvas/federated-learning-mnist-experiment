@@ -1,0 +1,2 @@
+simulation_id,timestamp,aggregation,num_rounds,local_epochs,num_malicious_clients,backdoor_attack_mode,alpha,final_centralized_mta,final_centralized_asr,dist_mta_history,dist_asr_history,central_mta_history,central_asr_history,notes
+exp-01,2025-09-25T13:43:53.954689,fedavg,,,10,,0.9,0.000000,0.000000,"[0.24287084528920086, 0.34807809518495086, 0.4511739587481919, 0.49617869201869924, 0.5302035652781568]","[0.6398828561570888, 0.20848215323424912, 0.1130563688999622, 0.15550271840905117, 0.14213342445163485]",[],[],
