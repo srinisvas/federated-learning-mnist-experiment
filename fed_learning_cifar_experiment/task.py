@@ -14,6 +14,13 @@ from fed_learning_cifar_experiment.utils.backdoor_attack import collate_with_bac
 from fed_learning_cifar_experiment.models.basic_cnn_model import Net
 from fed_learning_cifar_experiment.models.resnet_cnn_model import tiny_resnet18
 
+from pathlib import Path
+from datasets import load_from_disk
+
+# Local dataset paths for offline mode
+LOCAL_HF_DATASET = Path("./data/cifar10_hf")
+LOCAL_TORCH_DATASET = Path("./data/cifar10_torch")
+
 fds = None  # Cache FederatedDataset
 
 def get_resnet_cnn_model(num_classes: int = 10) -> nn.Module:
@@ -30,9 +37,11 @@ def load_data(partition_id: int, num_partitions: int, alpha_val: float, backdoor
         #Using Dirichlet Partitioner - with alpha - 0.9
         partitioner = DirichletPartitioner(num_partitions=num_partitions, alpha=alpha_val, partition_by="label")
         fds = FederatedDataset(
-            dataset="uoft-cs/cifar10",
+            dataset=str(LOCAL_HF_DATASET),
             partitioners={"train": partitioner},
         )
+
+        
     partition = fds.load_partition(partition_id)
     # Divide data on each node: 80% train, 20% test
     partition_train_test = partition.train_test_split(test_size=0.2, seed=42)
@@ -127,7 +136,7 @@ def load_test_data_for_eval(batch_size=64):
         [ToTensor(), Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
     )
 
-    test_dataset = CIFAR10(root="./data", train=False, download=False, transform=pytorch_transforms)
+    test_dataset = CIFAR10(root=str(LOCAL_TORCH_DATASET), train=False, download=False, transform=pytorch_transforms)
 
     test_data = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
