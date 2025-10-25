@@ -1,6 +1,7 @@
 import json
 import random
 
+import torch
 from flwr.common import Context, ndarrays_to_parameters
 from flwr.server import ServerApp, ServerAppComponents, ServerConfig
 from flwr.server.strategy import FedAvg
@@ -58,13 +59,15 @@ def server_fn(context: Context):
             }
         return on_fit_config
 
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
     if aggregation_method == "fedavg":
         strategy = SaveFedAvgMetricsStrategy(
             fraction_fit=1.0,
             fraction_evaluate=1.0,
             min_fit_clients=10,
             min_available_clients=10,
-            evaluate_fn=get_evaluate_fn(model=get_resnet_cnn_model(), test_data=testing_data),
+            evaluate_fn=get_evaluate_fn(model=get_resnet_cnn_model().to(device), test_data=testing_data),
             initial_parameters=parameters,
             on_fit_config_fn=on_fit_config_fn,
             simulation_id = simulation_id,

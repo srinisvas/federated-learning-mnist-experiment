@@ -48,6 +48,7 @@ def get_evaluate_fn(model, test_data, target_label=2):
         num_clients = config.get("num-clients")
         simulation_id = config.get("simulation-id")
         device = "cuda" if torch.cuda.is_available() else "cpu"
+        model.to(device)
 
         # Main Task accuracy
         loss, acc = test_eval(model, test_data, device=device)

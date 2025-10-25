@@ -182,6 +182,7 @@ def test_eval(net, test_data, device):
                 images, labels = batch["img"], batch["label"]
             else:
                 images, labels = batch
+            images, labels = images.to(device), labels.to(device)
             outputs = net(images)
             loss += criterion(outputs, labels).item()
             correct += (torch.max(outputs.data, 1)[1] == labels).sum().item()
