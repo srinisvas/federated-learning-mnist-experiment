@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-out_dir = "C:\\Users\\subra\\Research\\fed-learning-cifar-experiment"
+out_dir = "./"
 
 def _ensure_dir(path: str):
     os.makedirs(path, exist_ok=True)

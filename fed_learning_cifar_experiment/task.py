@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torchvision.datasets import CIFAR10
+from torchvision.transforms import RandomCrop, RandomHorizontalFlip, ColorJitter
 from torchvision.transforms import Compose, Normalize, ToTensor
 from datasets import load_from_disk, DatasetDict
 
@@ -58,76 +59,101 @@ def load_data(partition_id: int, num_partitions: int, alpha_val: float, backdoor
 
     partition = fds[partition_id]
     partition_train_test = partition.train_test_split(test_size=0.2, seed=42)
-    pytorch_transforms = Compose(
-        [ToTensor(), Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))]
-    )
+    pytorch_transforms = Compose([
+        RandomCrop(32, padding=4),
+        RandomHorizontalFlip(),
+        ColorJitter(0.2, 0.2, 0.2, 0.1),
+        ToTensor(),
+        Normalize(
+            mean=(0.4914, 0.4822, 0.4465),
+            std=(0.2023, 0.1994, 0.2010)
+        ),
+    ])
 
-    def apply_transforms(batch):
-        """Apply transforms to the partition from FederatedDataset."""
+    pytorch_test_transforms = Compose([
+        ToTensor(),
+        Normalize((0.4914, 0.4822, 0.4465),
+                  (0.2023, 0.1994, 0.2010)),
+    ])
+
+    def apply_train_transforms(batch):
         batch["img"] = [pytorch_transforms(img) for img in batch["img"]]
         return batch
 
-    partition_train_test = partition_train_test.with_transform(apply_transforms)
+    def apply_test_transforms(batch):
+        batch["img"] = [pytorch_test_transforms(img) for img in batch["img"]]
+        return batch
+
+    partition_train = partition_train_test["train"].with_transform(apply_train_transforms)
+    partition_test = partition_train_test["test"].with_transform(apply_test_transforms)
+
+    cuda_avail = torch.cuda.is_available()
+    num_workers = 0 if os.name == "nt" else 2
+    pin_memory = True if cuda_avail else False
 
     if backdoor_enabled:
         training_data = DataLoader(
-            partition_train_test["train"],
+            partition_train,
             batch_size=64,
             shuffle=True,
-            collate_fn=lambda batch: collate_with_backdoor(batch, num_backdoor_per_batch=20, target_label=2)
+            collate_fn=lambda batch: collate_with_backdoor(batch, num_backdoor_per_batch=20, target_label=target_label),
+            num_workers=num_workers,
+            pin_memory=pin_memory,
         )
-        test_data = DataLoader(partition_train_test["test"], batch_size=64)
     else:
-        training_data = DataLoader(partition_train_test["train"], batch_size=64, shuffle=True)
-        test_data = DataLoader(partition_train_test["test"], batch_size=64)
+        training_data = DataLoader(
+            partition_train,
+            batch_size=64,
+            shuffle=True,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
+
+    test_data = DataLoader(partition_test, batch_size=64, shuffle=False, num_workers=num_workers, pin_memory=pin_memory)
 
     return training_data, test_data
 
-
-def train(net, training_data, epochs, device, lr=0.1, scheduler_type="step"):
-    """Train the model on the training set."""
-    net.to(device)  # move model to GPU if available
-    criterion = torch.nn.CrossEntropyLoss().to(device)
-    #optimizer = torch.optim.Adam(net.parameters(), lr=0.1)
+def train(net, training_data, epochs, device, lr=0.05):
+    """Train the model on the training set using SGD + CosineAnnealingLR and label smoothing."""
+    net.to(device)
+    criterion = torch.nn.CrossEntropyLoss(label_smoothing=0.05).to(device)
     optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
-
-    if scheduler_type == "step":
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
-    elif scheduler_type == "cosine":
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
-    else:
-        scheduler = None
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, epochs))
 
     net.train()
     running_loss = 0.0
     for _ in range(epochs):
         for batch in training_data:
-            images = batch["img"]
-            labels = batch["label"]
+            if isinstance(batch, dict):
+                images, labels = batch["img"], batch["label"]
+            else:
+                images, labels = batch
+            images, labels = images.to(device, non_blocking=True), labels.to(device, non_blocking=True)
+
             optimizer.zero_grad()
-            loss = criterion(net(images.to(device)), labels.to(device))
+            outputs = net(images)
+            loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
 
-    if scheduler is not None:
         scheduler.step()
 
     avg_training_loss = running_loss / len(training_data)
     return avg_training_loss
 
 def test(net, test_data, device):
+    net.to(device)
     net.eval()
-    correct, total, loss = 0, 0, 0
     criterion = torch.nn.CrossEntropyLoss()
+    correct, total, loss = 0, 0, 0.0
     with torch.no_grad():
         for batch in test_data:
             if isinstance(batch, dict):
-                images, labels = batch["img"].to(device), batch["label"].to(device)
+                images, labels = batch["img"], batch["label"]
             else:
                 images, labels = batch
-                images, labels = images.to(device), labels.to(device)
-
+            images, labels = images.to(device, non_blocking=True), labels.to(device, non_blocking=True)
             outputs = net(images)
             loss += criterion(outputs, labels).item()
             _, predicted = torch.max(outputs.data, 1)
