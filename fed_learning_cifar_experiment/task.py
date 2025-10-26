@@ -8,6 +8,7 @@ from torch.utils.data import DataLoader
 from torchvision.datasets import CIFAR10
 from torchvision.transforms import RandomCrop, RandomHorizontalFlip, ColorJitter
 from torchvision.transforms import Compose, Normalize, ToTensor
+from torchvision.transforms import v2
 from datasets import load_from_disk, DatasetDict
 
 from fed_learning_cifar_experiment.utils.backdoor_attack import collate_with_backdoor
@@ -59,15 +60,15 @@ def load_data(partition_id: int, num_partitions: int, alpha_val: float, backdoor
 
     partition = fds[partition_id]
     partition_train_test = partition.train_test_split(test_size=0.2, seed=42)
-    pytorch_transforms = Compose([
-        RandomCrop(32, padding=4),
-        RandomHorizontalFlip(),
-        ColorJitter(0.2, 0.2, 0.2, 0.1),
-        ToTensor(),
-        Normalize(
-            mean=(0.4914, 0.4822, 0.4465),
-            std=(0.2023, 0.1994, 0.2010)
-        ),
+
+    pytorch_transforms = v2.Compose([
+        v2.ToImage(),
+        v2.RandomCrop(32, padding=4),
+        v2.RandomHorizontalFlip(),
+        v2.ColorJitter(0.2, 0.2, 0.2, 0.1),
+        v2.ToDtype(torch.float32, scale=True),
+        v2.Normalize((0.4914, 0.4822, 0.4465),
+                     (0.2023, 0.1994, 0.2010))
     ])
 
     pytorch_test_transforms = Compose([
