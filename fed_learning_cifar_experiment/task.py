@@ -5,6 +5,7 @@ from collections import OrderedDict
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from torch.nn.utils import parameters_to_vector, vector_to_parameters
 from torchvision.datasets import CIFAR10
 from torchvision.transforms import RandomCrop, RandomHorizontalFlip, ColorJitter
 from torchvision.transforms import Compose, Normalize, ToTensor
@@ -141,7 +142,8 @@ def train(net, training_data, epochs, device, lr=0.05):
         scheduler.step()
 
     avg_training_loss = running_loss / len(training_data)
-    return avg_training_loss
+    final_vec = parameters_to_vector(net.parameters()).detach().cpu().clone()
+    return avg_training_loss, final_vec
 
 def test(net, test_data, device):
     net.to(device)
