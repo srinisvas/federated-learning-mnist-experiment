@@ -90,7 +90,7 @@ class FlowerClient(NumPyClient):
             self.device,
             learning_rate
         )
-
+        """
         # --- diagnostics start (paste here immediately after train(...) returns) ---
         # train_loss, final_vec = train(...)
         # sanity: shapes & finiteness
@@ -148,7 +148,7 @@ class FlowerClient(NumPyClient):
         print("DIAG: ||scaled_vec_preview||:", scaled_vec_preview.norm().item(), "scaled_vec_preview[:10]:",
               scaled_vec_preview[:10].cpu().numpy())
         # --- diagnostics end ---
-
+        """
         if is_attacking_round:
             delta = final_vec.cpu() - init_vec.cpu()
             m = int(config.get("num-malicious-clients", 1))
