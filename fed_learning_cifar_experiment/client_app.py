@@ -91,6 +91,64 @@ class FlowerClient(NumPyClient):
             learning_rate
         )
 
+        # --- diagnostics start (paste here immediately after train(...) returns) ---
+        # train_loss, final_vec = train(...)
+        # sanity: shapes & finiteness
+        print("DIAG: train_loss", train_loss)
+        print("DIAG: init_vec shape", init_vec.shape, "final_vec shape", final_vec.shape)
+        print("DIAG: init_vec finite:", torch.isfinite(init_vec).all().item(),
+              "final_vec finite:", torch.isfinite(final_vec).all().item())
+
+        # basic vector stats
+        init_norm = init_vec.norm().item()
+        final_norm = final_vec.norm().item()
+        delta = final_vec - init_vec
+        delta_norm = delta.norm().item()
+        print(f"DIAG: ||init||={init_norm:.6e}  ||final||={final_norm:.6e}  ||delta||={delta_norm:.6e}")
+
+        # sample values (first 10)
+        print("DIAG: init_vec[:10]", init_vec[:10].cpu().numpy())
+        print("DIAG: final_vec[:10]", final_vec[:10].cpu().numpy())
+        print("DIAG: delta[:10]", delta[:10].cpu().numpy())
+
+        # per-layer quick checks using state_dicts
+        sd_init = {k: v.clone() for k, v in self.net.state_dict().items()}
+        sd_after = net_copy.state_dict()  # net_copy is attacker-trained net
+        keys_of_interest = ["conv1.weight", "fc.weight", "bn1.running_mean", "bn1.running_var"]
+        for k in keys_of_interest:
+            if k in sd_init and k in sd_after:
+                a = sd_init[k]
+                b = sd_after[k]
+                print(f"DIAG: key={k} init mean/std {a.mean().item():.6e}/{a.std().item():.6e} | "
+                      f"malicious mean/std {b.mean().item():.6e}/{b.std().item():.6e} | "
+                      f"diff_norm {(b.view(-1) - a.view(-1)).norm().item():.6e}")
+            else:
+                print("DIAG: key missing:", k)
+
+        # configuration diagnostics: clients, malicious, local epochs, lr
+        m = int(config.get("num-malicious-clients", 1))
+        num_clients_total = int(self.context.run_config.get("num-clients", 10))
+        sampled_clients = int(self.context.run_config.get("num-clients", num_clients_total))  # fallback
+        eta = float(num_clients_total) / float(max(1, m))
+        print("DIAG: num_clients_total", num_clients_total, "num_malicious", m,
+              "sampled_clients", sampled_clients, "eta(n/m)", eta,
+              "local_epochs", self.local_epochs, "learning_rate", learning_rate)
+
+        # check for NaNs/Infs per-layer in net_copy (attacker net)
+        malformed = False
+        for k, v in sd_after.items():
+            if not torch.isfinite(v).all():
+                print("DIAG: non-finite in attacker state:", k)
+                malformed = True
+                break
+        print("DIAG: attacker state finite:", (not malformed))
+
+        # quick scaled-norm preview (do not apply to model, just compute)
+        scaled_vec_preview = init_vec + eta * delta
+        print("DIAG: ||scaled_vec_preview||:", scaled_vec_preview.norm().item(), "scaled_vec_preview[:10]:",
+              scaled_vec_preview[:10].cpu().numpy())
+        # --- diagnostics end ---
+
         if is_attacking_round:
             delta = final_vec.cpu() - init_vec.cpu()
             m = int(config.get("num-malicious-clients", 1))
