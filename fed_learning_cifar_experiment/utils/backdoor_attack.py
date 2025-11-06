@@ -7,7 +7,7 @@ def _rgb_to_normalized(trigger_rgb, mean=(0.4914, 0.4822, 0.4465), std=(0.2023, 
     std = torch.tensor(std, dtype=dtype, device=device).view(3, 1, 1)
     return (trig - mean) / std
 
-def add_trigger(img, trigger_rgb=(1.0, 0.5, 0.0), trigger_size=3, alpha=1.0, mean=(0.4914,0.4822,0.4465), std=(0.2023,0.1994,0.2010)):
+def add_trigger(img, trigger_rgb=(1.0, 0.5, 0.0), trigger_size=8, alpha=1.0, mean=(0.4914,0.4822,0.4465), std=(0.2023,0.1994,0.2010)):
     """
     img: torch.Tensor (C,H,W) that is already normalized (ToDtype + Normalize applied).
     trigger_rgb: values in [0,1] RGB space (will be converted to normalized space).

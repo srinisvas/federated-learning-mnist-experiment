@@ -150,7 +150,7 @@ def train_backdoor(net, training_data, epochs, device, lr=0.01):
     """Train the model on the training set using SGD + CosineAnnealingLR and label smoothing."""
     net.to(device)
     criterion = torch.nn.CrossEntropyLoss().to(device)
-    optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=1e-6)
+    optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=0)
 
     net.train()
     running_loss = 0.0
