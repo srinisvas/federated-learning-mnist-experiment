@@ -39,7 +39,7 @@ def main():
 
     model = tiny_resnet18(num_classes=10, base_width=8).to(device)
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1).to(device)
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.2, momentum=0.9, weight_decay=5e-4)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.9, weight_decay=5e-4)
     epochs = 200
     scheduler = CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-4)
 
