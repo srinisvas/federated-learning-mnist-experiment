@@ -44,7 +44,7 @@ num-clients=100
 malicious-client-id=2
 simulation-id="exp-999"
 aggregation-method="FedAvg"
-ray-num-cpus = 101
+ray-num-cpus = 2
 ray-num-gpus = 1
 
 # Default federation to use when running the app
@@ -54,7 +54,7 @@ default = "local-simulation"
 # Local simulation federation with 10 virtual SuperNodes
 [tool.flwr.federations.local-simulation]
 options.num-supernodes = 100
-options.backend.client-resources.num-cpus =100
+options.backend.client-resources.num-cpus = 2
 options.backend.client-resources.num-gpus = 0
 
 # Remote federation example for use with SuperLink
