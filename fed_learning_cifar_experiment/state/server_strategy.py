@@ -43,8 +43,8 @@ class SaveFedAvgMetricsStrategy(fl.server.strategy.FedAvg):
         # Randomly pick malicious clients from the sampled list
         num_malicious = min(self.num_of_malicious_clients_per_round, len(sampled_ids))
         malicious_ids = random.sample(sampled_ids, num_malicious)
-        print(f"[Round {server_round}] Sampled clients: {sampled_ids}")
-        print(f"[Round {server_round}] Malicious clients: {malicious_ids}")
+        #print(f"[Round {server_round}] Sampled clients: {sampled_ids}")
+        #print(f"[Round {server_round}] Malicious clients: {malicious_ids}")
 
         fit_ins_list = []
         for client in sampled_clients:

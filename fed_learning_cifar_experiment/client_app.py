@@ -55,10 +55,10 @@ class FlowerClient(NumPyClient):
         current_round = config.get("current-round", "N/A")
         partition_id = self.context.node_config["partition-id"]
 
-        print(f"[Client {partition_id}] Round {current_round}")
-        print(f"[Client {partition_id}] Is malicious? {is_malicious}")
-        print(f"[Client {partition_id}] Sampled clients: {sampled_client_ids}")
-        print(f"[Client {partition_id}] Malicious clients: {malicious_client_ids}")
+        #print(f"[Client {partition_id}] Round {current_round}")
+        #print(f"[Client {partition_id}] Is malicious? {is_malicious}")
+        #print(f"[Client {partition_id}] Sampled clients: {sampled_client_ids}")
+        #print(f"[Client {partition_id}] Malicious clients: {malicious_client_ids}")
 
         learning_rate = 0.1
         is_attacking_round = False
@@ -73,7 +73,7 @@ class FlowerClient(NumPyClient):
                 self.client_state.config_records["num_backdoor_counts"]["count"] += 1
                 self.local_epochs = 100
                 learning_rate = 0.01
-                print("Incremented attack count to " + str(self.client_state.config_records["num_backdoor_counts"]))
+                #print("Incremented attack count to " + str(self.client_state.config_records["num_backdoor_counts"]))
             else:
                 self.training_set, _ = load_data(partition_id, num_partitions, alpha_val=0.9)
         elif attack_mode == "global-random-attack" and is_malicious:
@@ -104,8 +104,8 @@ class FlowerClient(NumPyClient):
 
         if is_attacking_round:
             # --- DEBUG METRICS START ---
-            print(f"\n--- DEBUG: ATTACKER (Client {partition_id}, Round {config.get('current-round', 'N/A')}) ---")
-            print(f"--- DEBUG: Initial global model norm (||G_t||): {init_vec.norm().item():.6f}")
+            #print(f"\n--- DEBUG: ATTACKER (Client {partition_id}, Round {config.get('current-round', 'N/A')}) ---")
+            #print(f"--- DEBUG: Initial global model norm (||G_t||): {init_vec.norm().item():.6f}")
             train_loss, final_vec = train_backdoor(
                 self.net,
                 self.training_set,
@@ -113,17 +113,17 @@ class FlowerClient(NumPyClient):
                 self.device,
                 learning_rate
             )
-            print(f"--- DEBUG: Attacker model norm (||X||): {final_vec.norm().item():.6f}")
+            #print(f"--- DEBUG: Attacker model norm (||X||): {final_vec.norm().item():.6f}")
             delta = final_vec.cpu() - init_vec.cpu()
-            print(f"--- DEBUG: Update delta norm (||X - G_t||): {delta.norm().item():.6f}")
+            #print(f"--- DEBUG: Update delta norm (||X - G_t||): {delta.norm().item():.6f}")
 
             eta = 10 #(num_clients_total / (sampled_clients * fraction_fit))
-            print(f"--- DEBUG: Scaling factor (eta): {eta}")
+            #print(f"--- DEBUG: Scaling factor (eta): {eta}")
             scaled_vec = init_vec + eta * delta
             scaled_delta_norm = (eta * delta).norm().item()
-            print(f"--- DEBUG: Scaled delta norm (||eta * (X - G_t)||): {scaled_delta_norm:.6f}")
-            print(f"--- DEBUG: Final model norm (||G_t + eta*delta||): {scaled_vec.norm().item():.6f}")
-            print(f"--- DEBUG: ATTACK FINISHED ---\n")
+            #print(f"--- DEBUG: Scaled delta norm (||eta * (X - G_t)||): {scaled_delta_norm:.6f}")
+            #print(f"--- DEBUG: Final model norm (||G_t + eta*delta||): {scaled_vec.norm().item():.6f}")
+            #print(f"--- DEBUG: ATTACK FINISHED ---\n")
             vector_to_parameters(scaled_vec.to(self.device), self.net.parameters())
             return get_weights(self.net), len(self.training_set.dataset), {"train_loss": train_loss}
         else:
@@ -144,6 +144,7 @@ class FlowerClient(NumPyClient):
         loss, accuracy = test(self.net, self.test_set, self.device)
         # Evaluate Client Side Attack Success Rate
         client_side_asr = evaluate_asr(self.net, self.test_set, target_label=2, device=self.device)
+        print(f"[Client {partition_id}] Completed evaluation: MTA={accuracy:.4f}, ASR={client_side_asr:.4f}")
         return loss, len(self.test_set.dataset), {"mta": accuracy, "asr": client_side_asr}
 
 def client_fn(context: Context):
@@ -157,7 +158,7 @@ def client_fn(context: Context):
     client = FlowerClient(net, local_epochs, context)
 
     client.cid = str(partition_id)
-    print(f"Initialized client with partition ID: {partition_id} (CID set to {client.cid})")
+    #print(f"Initialized client with partition ID: {partition_id} (CID set to {client.cid})")
     # Return Client instance
     return client.to_client()
     #return FlowerClient(net, local_epochs, context).to_client()
