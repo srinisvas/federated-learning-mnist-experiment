@@ -47,18 +47,23 @@ class FlowerClient(NumPyClient):
         num_clients_total = int(self.context.run_config.get("num-clients", 100))
         fraction_fit = float(self.context.run_config.get("fraction-fit", 0.1))
         sampled_clients = 10
-        malicious_partitions = json.loads(config.get("malicious_partitions", "[]"))
-        my_partition = str(self.context.node_config["partition-id"])
+
         sampled_client_ids = json.loads(config.get("sampled_client_ids", "[]"))
         malicious_client_ids = json.loads(config.get("malicious_client_ids", "[]"))
+        is_malicious = str(config.get("is_malicious", "False")).lower() == "true"
+
         current_round = config.get("current-round", "N/A")
-        print(f"[Client {partition_id}] Current round: {current_round}")
-        print(f"[Client {partition_id}] Sampled clients this round: {sampled_client_ids}")
-        print(f"[Client {partition_id}] Malicious clients this round: {malicious_client_ids}")
+        partition_id = self.context.node_config["partition-id"]
+
+        print(f"[Client {partition_id}] Round {current_round}")
+        print(f"[Client {partition_id}] Is malicious? {is_malicious}")
+        print(f"[Client {partition_id}] Sampled clients: {sampled_client_ids}")
+        print(f"[Client {partition_id}] Malicious clients: {malicious_client_ids}")
+
         learning_rate = 0.1
         is_attacking_round = False
 
-        if attack_mode == "global-attack-first" and my_partition in malicious_partitions:
+        if attack_mode == "global-attack-first" and is_malicious:
             num_malicious_clients = int(config.get("num-malicious-clients", 1))
             attack_count = self.client_state.config_records["num_backdoor_counts"]["count"]
             if attack_count < num_malicious_clients:
@@ -71,7 +76,7 @@ class FlowerClient(NumPyClient):
                 print("Incremented attack count to " + str(self.client_state.config_records["num_backdoor_counts"]))
             else:
                 self.training_set, _ = load_data(partition_id, num_partitions, alpha_val=0.9)
-        elif attack_mode == "global-random-attack" and my_partition in malicious_partitions:
+        elif attack_mode == "global-random-attack" and is_malicious:
             backdoor_rounds = json.loads(config["backdoor-rounds"])
             print("Rounds Selected for Backdoor:" + str(backdoor_rounds))
             current_round = config["current-round"]
@@ -85,7 +90,7 @@ class FlowerClient(NumPyClient):
                 self.training_set, _ = load_data(partition_id, num_partitions, alpha_val=0.9)
         elif attack_mode == "per-round-attack":
             backdoor_client_ids = json.loads(config["backdoor-client-ids"])
-            if my_partition in malicious_partitions:
+            if is_malicious:
                 print("Backdoor Attack Injected #Client ID: " + str(partition_id))
                 is_attacking_round = True
                 self.training_set, _ = load_data(partition_id, num_partitions, alpha_val=0.9, backdoor_enabled=True)

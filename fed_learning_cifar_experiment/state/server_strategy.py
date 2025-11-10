@@ -34,50 +34,30 @@ class SaveFedAvgMetricsStrategy(fl.server.strategy.FedAvg):
         self.num_of_malicious_clients_per_round = num_of_malicious_clients_per_round
         self._cid_to_partition = {}
 
-    def initialize_parameters(self, client_manager):
-        """Fetch client properties once before training begins."""
-        print("[Server] Waiting for clients to connect before initialization...")
-        client_manager.wait_for(num_clients=self.num_clients)
-
-        for cid, proxy in client_manager.all().items():
-            try:
-                ins = GetPropertiesIns({})
-                # Use proper signature; group_id="init" is accepted by simulation/Grid
-                res = proxy.get_properties(ins, timeout=30, group_id=None)
-                props = getattr(res, "properties", {}) or {}
-                self._cid_to_partition[cid] = props.get("partition_id")
-                print(f"[Init] Cached {cid} → partition {self._cid_to_partition[cid]}")
-            except Exception as e:
-                print(f"[Init] Could not get properties for {cid}: {e}")
-                self._cid_to_partition[cid] = None
-
-        # Call base class to set initial params
-        return super().initialize_parameters(client_manager)
-
     def configure_fit(self, server_round: int, parameters, client_manager):
         num_available = len(client_manager.all())
         sample_size, min_num = self.num_fit_clients(num_available)
         sampled_clients = list(client_manager.sample(sample_size, min_num))
         sampled_ids = [c.cid for c in sampled_clients]
 
-        # Use the cached mapping
-        sampled_partitions = [self._cid_to_partition.get(cid) for cid in sampled_ids]
-        print(f"[Round {server_round}] Sampled partitions: {sampled_partitions}")
+        # Randomly pick malicious clients from the sampled list
+        num_malicious = min(self.num_of_malicious_clients_per_round, len(sampled_ids))
+        malicious_ids = random.sample(sampled_ids, num_malicious)
+        print(f"[Round {server_round}] Sampled clients: {sampled_ids}")
+        print(f"[Round {server_round}] Malicious clients: {malicious_ids}")
 
-        valid_parts = [p for p in sampled_partitions if p is not None]
-        num_malicious = min(self.num_of_malicious_clients_per_round, len(valid_parts))
-        malicious_partitions = random.sample(valid_parts, num_malicious) if num_malicious > 0 else []
-        print(f"[Round {server_round}] Malicious partitions: {malicious_partitions}")
+        fit_ins_list = []
+        for client in sampled_clients:
+            config = self.on_fit_config_fn(server_round) if self.on_fit_config_fn else {}
+            config.update({
+                "current-round": server_round,
+                "sampled_client_ids": json.dumps(sampled_ids),
+                "malicious_client_ids": json.dumps(malicious_ids),
+                "is_malicious": str(client.cid in malicious_ids),  # unique per client
+            })
+            fit_ins_list.append((client, FitIns(parameters, config)))
 
-        config = self.on_fit_config_fn(server_round) if self.on_fit_config_fn else {}
-        config.update({
-            "current-round": server_round,
-            "sampled_partitions": json.dumps(sampled_partitions),
-            "malicious_partitions": json.dumps(malicious_partitions),
-        })
-
-        fit_ins = FitIns(parameters, config)
-        return [(c, fit_ins) for c in sampled_clients]
+        return fit_ins_list
 
     def aggregate_evaluate(self, rnd, results, failures):
         metrics = super().aggregate_evaluate(rnd, results, failures)
