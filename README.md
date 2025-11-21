@@ -16,7 +16,7 @@ pip install -e .
 In the `fed-learning-cifar-experiment` directory, use `flwr run` to run a local simulation:
 
 ```bash
-flwr run .
+RAY_DEDUP_LOGS=0 flwr run . --run-config "num-clients=100 num-server-rounds=100 local-epochs=2 ray-num-cpus=2 ray-num-gpus=1 backdoor-attack-mode='global-random-attack' num-malicious-clients=5 simulation-id='exp-01' aggregation-method='FedAvg'"
 ```
 
 Refer to the [How to Run Simulations](https://flower.ai/docs/framework/how-to-run-simulations.html) guide in the documentation for advice on how to optimize your simulations.
