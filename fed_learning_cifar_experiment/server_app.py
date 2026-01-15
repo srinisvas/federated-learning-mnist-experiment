@@ -7,7 +7,7 @@ from flwr.common import Context, ndarrays_to_parameters
 from flwr.server import ServerApp, ServerAppComponents, ServerConfig
 from flwr.server.strategy import FedAvg
 
-from fed_learning_cifar_experiment.state.fedavg_cluster_defense import FedAvgClusterDefenseStrategy
+from fed_learning_cifar_experiment.state.fedavg_cluster_defense import SaveFedAvgMetricsClusterDefenseStrategy
 from fed_learning_cifar_experiment.state.server_strategy import SaveFedAvgMetricsStrategy
 
 from fed_learning_cifar_experiment.utils.evaluate_attack import get_evaluate_fn
@@ -86,7 +86,7 @@ def server_fn(context: Context):
             num_of_malicious_clients_per_round = num_of_malicious_clients_per_round
         )
     elif aggregation_method == "fedavg-cluster-defense":
-        strategy = FedAvgClusterDefenseStrategy(
+        strategy = SaveFedAvgMetricsClusterDefenseStrategy(
             fraction_fit=0.1,
             fraction_evaluate=0.1,
             min_fit_clients=10,
