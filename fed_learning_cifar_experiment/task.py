@@ -91,8 +91,8 @@ def load_data(partition_id: int, num_partitions: int, alpha_val: float, backdoor
     partition_test = partition_train_test["test"].with_transform(apply_test_transforms)
 
     cuda_avail = torch.cuda.is_available()
-    num_workers = 0 if os.name == "nt" else 2
-    pin_memory = True if cuda_avail else False
+    num_workers = 0 #if os.name == "nt" else 2
+    pin_memory = False #True if cuda_avail else False
 
     if backdoor_enabled:
         training_data = DataLoader(
