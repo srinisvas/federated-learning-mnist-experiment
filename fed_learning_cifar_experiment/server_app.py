@@ -119,7 +119,9 @@ def server_fn(context: Context):
             aggregation_method=aggregation_method,
             backdoor_attack_mode=backdoor_attack_mode,
             num_of_malicious_clients=num_of_malicious_clients,
-            num_of_malicious_clients_per_round=num_of_malicious_clients_per_round
+            num_of_malicious_clients_per_round=num_of_malicious_clients_per_round,
+
+            num_byzantine=2,  # or num_of_malicious_clients_per_round
         )
 
 
