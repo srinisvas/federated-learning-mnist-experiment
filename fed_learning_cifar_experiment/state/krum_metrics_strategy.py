@@ -96,7 +96,10 @@ class SaveKrumMetricsStrategy(fl.server.strategy.Strategy):
         if self.evaluate_fn is None:
             return None
 
-        res = self.evaluate_fn(server_round, parameters)
+        # Flower's evaluate_fn signature expects (server_round, parameters, config)
+        config = {}
+        res = self.evaluate_fn(server_round, parameters, config)
+
         if res is None:
             return None
 
