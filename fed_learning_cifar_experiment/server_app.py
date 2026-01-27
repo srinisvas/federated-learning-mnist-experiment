@@ -9,6 +9,7 @@ from flwr.server.strategy import FedAvg
 
 from fed_learning_cifar_experiment.state.fedavg_cluster_defense import SaveFedAvgMetricsClusterDefenseStrategy
 from fed_learning_cifar_experiment.state.krum_metrics_strategy import SaveKrumMetricsStrategy
+from fed_learning_cifar_experiment.state.multi_krum_metrics_strategy import SaveMultiKrumMetricsStrategy
 from fed_learning_cifar_experiment.state.server_strategy import SaveFedAvgMetricsStrategy
 
 from fed_learning_cifar_experiment.utils.evaluate_attack import get_evaluate_fn
@@ -124,6 +125,27 @@ def server_fn(context: Context):
             num_byzantine=2,  # or num_of_malicious_clients_per_round
         )
 
+    elif aggregation_method == "multikrum":
+        strategy = SaveMultiKrumMetricsStrategy(
+            fraction_fit=0.1,
+            fraction_evaluate=0.1,
+            min_fit_clients=10,
+            min_available_clients=100,
+            evaluate_fn=get_evaluate_fn(model=get_resnet_cnn_model().to(device), test_data=testing_data),
+            initial_parameters=parameters,
+            on_fit_config_fn=on_fit_config_fn,
+            simulation_id=simulation_id,
+            num_clients=num_clients,
+            num_rounds=num_rounds,
+            aggregation_method=aggregation_method,
+            backdoor_attack_mode=backdoor_attack_mode,
+            num_of_malicious_clients=num_of_malicious_clients,
+            num_of_malicious_clients_per_round=num_of_malicious_clients_per_round,
+
+            num_byzantine=2,  # f
+            num_clients_to_select=5,  # k
+            normalize_updates=True,  # keep this on
+        )
 
     config = ServerConfig(num_rounds=num_rounds)
 
