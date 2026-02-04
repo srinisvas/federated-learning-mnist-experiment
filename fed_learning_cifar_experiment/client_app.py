@@ -8,7 +8,7 @@ from flwr.common import Context, ConfigRecord
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
 
 from fed_learning_cifar_experiment.task import (get_weights, load_data, set_weights, test, train, get_resnet_cnn_model,
-                                                get_basic_cnn_model, train_backdoor, train_constrain_and_scale)
+                                                get_basic_cnn_model, train_backdoor, train_constrain_and_scale, krum_safe_scale)
 from fed_learning_cifar_experiment.utils.evaluate_attack import evaluate_asr
 
 
@@ -25,6 +25,7 @@ class FlowerClient(NumPyClient):
         self.net.to(self.device)
         self.client_state = context.state
         self.partition_id = str(self.context.node_config.get("partition-id"))
+        self.prev_global_vec = None
 
         if "num_backdoor_counts" not in self.client_state.config_records:
             self.client_state.config_records["num_backdoor_counts"] = ConfigRecord({"count": 0})
@@ -37,6 +38,7 @@ class FlowerClient(NumPyClient):
         set_weights(self.net, parameters)
         init_state = {k: v.cpu().clone() for k, v in self.net.state_dict().items()}
         init_vec = parameters_to_vector(self.net.parameters()).detach().cpu().clone()
+        prev_global_vec = self.prev_global_vec
         net_copy = get_resnet_cnn_model()
         set_weights(net_copy, parameters)
         net_copy.to(self.device)
@@ -128,45 +130,42 @@ class FlowerClient(NumPyClient):
                 # print(f"--- DEBUG: Final model norm (||G_t + eta*delta||): {scaled_vec.norm().item():.6f}")
                 # print(f"--- DEBUG: ATTACK FINISHED ---\n")
                 vector_to_parameters(scaled_vec.to(self.device), self.net.parameters())
+                self.prev_global_vec = init_vec.clone()
                 return get_weights(self.net), len(self.training_set.dataset), {"train_loss": train_loss}
 
             else:
                 # ---- CONSTRAIN & SCALE ATTACK ----
-                """
                 final_vec = train_constrain_and_scale(
                     net=self.net,
                     training_data=self.training_set,
                     epochs=self.local_epochs,
                     device=self.device,
                     init_vec=init_vec,
+                    prev_global_vec=prev_global_vec,  # this is new
                     lr=learning_rate,
-                    alpha=0.9,
-                    lano_type="l2+cos",  # try: "l2", "cos", "l2+cos"
-                    epsilon=0.02,
-                )
-                """
-                final_vec = train_constrain_and_scale(
-                    net=self.net,
-                    training_data=self.training_set,
-                    epochs=self.local_epochs,
-                    device=self.device,
-                    init_vec=init_vec,
-                    lr=learning_rate,
-                    lambda_l2=0.01,
-                    lambda_cos=0.0,
-                    epsilon=None,
+                    lambda_norm=0.02,
+                    lambda_dir=0.5,
+                    lambda_target_norm=0.1,
+                    epsilon_ce=None,
                 )
 
                 delta = final_vec - init_vec
 
-                # Model replacement scaling (same as before)
-                gamma = 10  # ≈ num_clients / selected_clients
-                scaled_vec = init_vec + gamma * delta
+                gamma = 2.0
+
+                scaled_vec = krum_safe_scale(
+                    final_vec=final_vec,
+                    init_vec=init_vec,
+                    gamma=gamma,
+                    keep_delta_norm=False,
+                )
 
                 vector_to_parameters(
                     scaled_vec.to(self.device),
                     self.net.parameters()
                 )
+
+                self.prev_global_vec = init_vec.clone()
 
                 return get_weights(self.net), len(self.training_set.dataset), {
                     "attack": "constrain-and-scale"
@@ -180,6 +179,9 @@ class FlowerClient(NumPyClient):
                 self.device,
                 learning_rate
             )
+
+            self.prev_global_vec = init_vec.clone()
+
             return get_weights(self.net), len(self.training_set.dataset), {"train_loss": train_loss}
 
     def evaluate(self, parameters, config):

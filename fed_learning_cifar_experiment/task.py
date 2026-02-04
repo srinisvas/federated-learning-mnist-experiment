@@ -12,6 +12,7 @@ from torchvision.transforms import Compose, Normalize, ToTensor
 from torchvision.transforms import v2
 from datasets import load_from_disk, DatasetDict
 import torch.nn.functional as F
+from torch.nn.utils import parameters_to_vector, vector_to_parameters
 
 from fed_learning_cifar_experiment.utils.backdoor_attack import collate_with_backdoor
 from fed_learning_cifar_experiment.models.basic_cnn_model import Net
@@ -181,112 +182,65 @@ def train_backdoor(net, training_data, epochs, device, lr=0.01):
     final_vec = parameters_to_vector(net.parameters()).detach().cpu().clone()
     return avg_training_loss, final_vec
 
-def train_constrain_and_scale_v1(
-    net,
-    training_data,
-    epochs,
-    device,
-    init_vec: torch.Tensor,      # G_t vector
-    lr=0.01,
-    alpha=0.9,                   # Bagdasaryan α
-    lano_type="l2",               # "l2", "cos", "l2+cos"
-    epsilon=0.02,                 # early stop threshold
-):
-    """
-    Constrain-and-scale attacker training.
-    Trains X starting from G_t using:
-      L = α L_class + (1-α) L_ano
-    """
-
-    net.to(device)
-    net.train()
-
-    # Initialize model exactly at G_t
-    vector_to_parameters(init_vec.to(device), net.parameters())
-
-    criterion = torch.nn.CrossEntropyLoss().to(device)
-    optimizer = torch.optim.SGD(
-        net.parameters(),
-        lr=lr,
-        momentum=0.9,
-        weight_decay=0.0
-    )
-
-    g_vec = init_vec.to(device)
-
-    for _ in range(epochs):
-        running_loss = 0.0
-        steps = 0
-
-        for batch in training_data:
-            if isinstance(batch, dict):
-                images, labels = batch["img"], batch["label"]
-            else:
-                images, labels = batch
-
-            images = images.to(device, non_blocking=True)
-            labels = labels.to(device, non_blocking=True)
-
-            optimizer.zero_grad(set_to_none=True)
-
-            logits = net(images)
-            l_class = criterion(logits, labels)
-
-            w_vec = parameters_to_vector(net.parameters())
-
-            # ---- anomaly loss ----
-            if lano_type == "l2":
-                l_ano = torch.sum((w_vec - g_vec) ** 2)
-
-            elif lano_type == "cos":
-                cos = torch.nn.functional.cosine_similarity(
-                    w_vec, g_vec, dim=0, eps=1e-8
-                )
-                l_ano = 1.0 - cos
-
-            elif lano_type == "l2+cos":
-                l2 = torch.sum((w_vec - g_vec) ** 2)
-                cos = torch.nn.functional.cosine_similarity(
-                    w_vec, g_vec, dim=0, eps=1e-8
-                )
-                l_ano = l2 + (1.0 - cos)
-
-            else:
-                raise ValueError(f"Unknown lano_type: {lano_type}")
-
-            loss = alpha * l_class + (1.0 - alpha) * l_ano
-            loss.backward()
-            optimizer.step()
-
-            running_loss += l_class.item()
-            steps += 1
-
-        if running_loss / max(1, steps) < epsilon:
-            break
-
-    final_vec = parameters_to_vector(net.parameters()).detach().cpu().clone()
-    return final_vec
-
 def train_constrain_and_scale(
     net,
     training_data,
     epochs,
     device,
-    init_vec: torch.Tensor,
-    lr=0.01,
-    lambda_l2=0.01,          # start here
-    lambda_cos=0.0,          # keep 0 initially
-    epsilon=None,            # disable early-stop initially
+    init_vec: torch.Tensor,                 # g_t
+    prev_global_vec: torch.Tensor = None,   # g_{t-1} (recommended)
+    lr: float = 0.005,
+
+    # --- Camouflage weights (good defaults) ---
+    lambda_norm: float = 0.02,              # keep update small-ish (distance camouflage)
+    lambda_dir: float = 0.50,               # align with global drift direction
+    lambda_target_norm: float = 0.10,       # match typical update norm (helps MultiKrum normalize_updates=True)
+
+    # --- Norm target control ---
+    target_delta_norm: float = None,        # if None, estimate from ||g_t - g_{t-1}||
+    min_dir_norm: float = 1e-12,
+
+    # --- Early stop (optional) ---
+    epsilon_ce: float = None,               # keep None until stable
+
+    # --- Loss ---
+    label_smoothing: float = 0.0,           # keep 0 for attacker usually
 ):
+    """
+    Constrain-and-scale optimized for Krum / MultiKrum.
+
+    Shapes the attacker UPDATE delta = w - g_t:
+      - small L2 (distance camouflage)
+      - direction aligned with d_t = g_t - g_{t-1}
+      - norm matching to a target magnitude (useful when MultiKrum normalizes updates)
+
+    Returns: final_vec (weights) on CPU
+    """
+
     net.to(device)
     net.train()
 
-    vector_to_parameters(init_vec.to(device), net.parameters())
+    # Start exactly from g_t
+    g = init_vec.detach().to(device)
+    vector_to_parameters(g, net.parameters())
 
-    criterion = torch.nn.CrossEntropyLoss().to(device)
+    # Direction d_t (unit) from last global drift, if available
+    d_unit = None
+    if prev_global_vec is not None:
+        g_prev = prev_global_vec.detach().to(device)
+        d = (g - g_prev)
+        d_norm = torch.norm(d)
+        if d_norm >= min_dir_norm:
+            d_unit = d / d_norm
+
+        # If no explicit target norm, estimate from last global step magnitude
+        if target_delta_norm is None:
+            est = float(torch.norm(g - g_prev).detach().cpu())
+            if est >= 1e-8:
+                target_delta_norm = est
+
+    criterion = torch.nn.CrossEntropyLoss(label_smoothing=label_smoothing).to(device)
     optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=0.0)
-
-    g_vec = init_vec.to(device)
 
     for _ in range(epochs):
         running_ce = 0.0
@@ -304,31 +258,70 @@ def train_constrain_and_scale(
             optimizer.zero_grad(set_to_none=True)
 
             logits = net(images)
-            l_class = criterion(logits, labels)
+            ce = criterion(logits, labels)
 
-            w_vec = parameters_to_vector(net.parameters())
-            delta = (w_vec - g_vec)
+            w = parameters_to_vector(net.parameters())
+            delta = (w - g)
 
-            # Scale-stable constraint
-            l2 = torch.mean(delta * delta)
+            # (1) keep update small -> helps Krum distances
+            l_norm = torch.mean(delta * delta)
 
-            loss = l_class + lambda_l2 * l2
+            loss = ce + lambda_norm * l_norm
 
-            # optional cosine on WEIGHTS (rarely needed at first)
-            if lambda_cos > 0.0:
-                cos = F.cosine_similarity(w_vec, g_vec, dim=0, eps=1e-8)
-                loss = loss + lambda_cos * (1.0 - cos)
+            # (2) direction camouflage -> helps look like benign drift
+            if d_unit is not None and lambda_dir > 0.0:
+                delta_norm = torch.norm(delta) + 1e-12
+                delta_unit = delta / delta_norm
+                cos = torch.dot(delta_unit, d_unit).clamp(-1.0, 1.0)
+                l_dir = 1.0 - cos
+                loss = loss + lambda_dir * l_dir
+
+            # (3) norm matching -> helps MultiKrum normalize_updates=True
+            if target_delta_norm is not None and lambda_target_norm > 0.0:
+                delta_norm = torch.norm(delta) + 1e-12
+                l_tnorm = (delta_norm - target_delta_norm) ** 2
+                loss = loss + lambda_target_norm * l_tnorm
 
             loss.backward()
             optimizer.step()
 
-            running_ce += float(l_class.detach().cpu())
+            running_ce += float(ce.detach().cpu())
             steps += 1
 
-        if epsilon is not None and (running_ce / max(1, steps)) < epsilon:
+        if epsilon_ce is not None and (running_ce / max(1, steps)) < epsilon_ce:
             break
 
     return parameters_to_vector(net.parameters()).detach().cpu().clone()
+
+
+def krum_safe_scale(
+    final_vec: torch.Tensor,
+    init_vec: torch.Tensor,
+    gamma: float,
+    keep_delta_norm: bool = False,
+):
+    """
+    Krum-safe scaling: scaled_vec = g + gamma*(w - g)
+
+    For Krum: gamma must be small (typically 1 to 5).
+    For MultiKrum with normalize_updates=True: scaling changes direction if later normalized,
+    but still keep gamma small to avoid outlier distances pre-normalization.
+
+    If keep_delta_norm=True, we rescale back to the original delta norm after applying gamma.
+    Useful if you want to preserve "typical magnitude" while nudging direction.
+    """
+    g = init_vec.detach().cpu()
+    w = final_vec.detach().cpu()
+    delta = w - g
+
+    scaled_delta = gamma * delta
+
+    if keep_delta_norm:
+        orig = torch.norm(delta) + 1e-12
+        new = torch.norm(scaled_delta) + 1e-12
+        scaled_delta = scaled_delta * (orig / new)
+
+    return (g + scaled_delta).clone()
 
 
 def test(net, test_data, device):
