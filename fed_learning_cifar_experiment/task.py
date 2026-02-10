@@ -195,6 +195,7 @@ def train_constrain_and_scale(
     lambda_norm: float = 0.02,              # keep update small-ish (distance camouflage)
     lambda_dir: float = 0.50,               # align with global drift direction
     lambda_target_norm: float = 0.10,       # match typical update norm (helps MultiKrum normalize_updates=True)
+    lambda_pair: float = 0.20,
 
     # --- Norm target control ---
     target_delta_norm: float = None,        # if None, estimate from ||g_t - g_{t-1}||
@@ -281,6 +282,13 @@ def train_constrain_and_scale(
                 delta_norm = torch.norm(delta) + 1e-12
                 l_tnorm = (delta_norm - target_delta_norm) ** 2
                 loss = loss + lambda_target_norm * l_tnorm
+
+            # (4) pairwise camouflage (Krum proxy): match benign-like update vector
+            if prev_global_vec is not None and lambda_pair > 0.0:
+                # benign proxy update from last global step
+                delta_ref = (g - g_prev)
+                l_pair = torch.mean((delta - delta_ref) ** 2)
+                loss = loss + lambda_pair * l_pair
 
             loss.backward()
             optimizer.step()

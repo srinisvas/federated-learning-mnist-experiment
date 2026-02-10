@@ -39,6 +39,10 @@ class FlowerClient(NumPyClient):
         init_state = {k: v.cpu().clone() for k, v in self.net.state_dict().items()}
         init_vec = parameters_to_vector(self.net.parameters()).detach().cpu().clone()
         prev_global_vec = self.prev_global_vec
+        # Ensure we always have a prev_global_vec after round 1
+        # If None, treat previous as current for stable behavior
+        if prev_global_vec is None:
+            prev_global_vec = init_vec.clone()
         net_copy = get_resnet_cnn_model()
         set_weights(net_copy, parameters)
         net_copy.to(self.device)
@@ -154,15 +158,33 @@ class FlowerClient(NumPyClient):
                     init_vec=init_vec,
                     prev_global_vec=prev_global_vec,
                     lr=learning_rate,
-                    lambda_norm=0.02,
-                    lambda_dir=0.5,
-                    lambda_target_norm=0.1,
+                    lambda_norm=0.005,
+                    lambda_dir=1.0,
+                    lambda_target_norm=0.05,
+                    lambda_pair=0.20,
                     epsilon_ce=None,
                 )
 
                 delta = final_vec - init_vec
 
-                gamma = 2.0
+                if prev_global_vec is not None:
+                    benign_delta = (init_vec - prev_global_vec)
+                    cos_to_benign = torch.dot(delta, benign_delta) / (
+                                (delta.norm() + 1e-12) * (benign_delta.norm() + 1e-12))
+                    print(f"[Client {partition_id}][Round {current_round}] "
+                          f"||Δ||={delta.norm().item():.4f}, "
+                          f"cos(Δ,Δ_benign)={cos_to_benign.item():.4f}")
+
+                # Adaptive gamma: keep attacker update magnitude near last benign/global step
+                gamma_cap = 5.0  # safe upper cap; tune 3-6
+                if prev_global_vec is not None:
+                    benign_step = torch.norm(init_vec - prev_global_vec).item()
+                    attack_step = torch.norm(final_vec - init_vec).item()
+                    # If our crafted update is tiny, allow modest amplification; otherwise clamp
+                    gamma = min(gamma_cap, (benign_step / (attack_step + 1e-12)))
+                    gamma = max(1.0, gamma)  # don't shrink below 1 unless you want stealth-only
+                else:
+                    gamma = 1.0
 
                 scaled_vec = krum_safe_scale(
                     final_vec=final_vec,
