@@ -46,6 +46,7 @@ class SaveKrumMetricsStrategy(fl.server.strategy.Krum):
         self.num_of_malicious_clients = num_of_malicious_clients
         self.num_of_malicious_clients_per_round = num_of_malicious_clients_per_round
         self._cid_to_partition: Dict[str, int] = {}
+        self._last_round_malicious_partitions: set[int] = set()
 
         # --------- Compatibility layer for Flower Krum constructor ---------
         # Some versions use num_byzantine, some use num_malicious_clients.
@@ -99,6 +100,11 @@ class SaveKrumMetricsStrategy(fl.server.strategy.Krum):
         num_malicious = min(self.num_of_malicious_clients_per_round, len(sampled_ids))
         malicious_ids = random.sample(sampled_ids, num_malicious)
 
+        self._last_round_malicious_partitions = {
+            self._cid_to_partition[cid]
+            for cid in malicious_ids
+        }
+
         fit_ins_list: List[Tuple[ClientProxy, FitIns]] = []
         for client in sampled_clients:
             config = self.on_fit_config_fn(server_round) if self.on_fit_config_fn else {}
@@ -119,6 +125,13 @@ class SaveKrumMetricsStrategy(fl.server.strategy.Krum):
             else:
                 config["prev_global_tensors_hex"] = "[]"
                 config["prev_global_tensor_type"] = "numpy.ndarray"
+
+            if not hasattr(self, "_cid_to_partition"):
+                self._cid_to_partition = {}
+
+            self._cid_to_partition[client.cid] = int(
+                client.properties.get("partition_id", -1)
+            )
 
             fit_ins_list.append((client, FitIns(parameters, config)))
 
@@ -181,20 +194,27 @@ class SaveKrumMetricsStrategy(fl.server.strategy.Krum):
             selected_params = aggregated[0]
 
             # Identify which client was selected by Krum
-            selected_cid = None
+
+            selected_partition = None
+
             for client_proxy, fit_res in results:
-                if fit_res.parameters.tensors == selected_params.tensors:
-                    selected_cid = client_proxy.cid
+                if fit_res.parameters.tensors == aggregated[0].tensors:
+                    selected_partition = self._cid_to_partition.get(client_proxy.cid, -1)
                     break
 
             is_attacker_selected = (
-                    selected_cid is not None
-                    and selected_cid in getattr(self, "_last_round_malicious_ids", set())
+                    selected_partition in self._last_round_malicious_partitions
             )
 
             print(
                 f"[Round {rnd}][Krum] "
-                f"Selected CID={selected_cid}, "
+                f"Selected partition_id={selected_partition}, "
+                f"Attacker selected={is_attacker_selected}"
+            )
+
+            print(
+                f"[Round {rnd}][Krum] "
+                f"Selected partition_id={selected_partition}, "
                 f"Attacker selected={is_attacker_selected}"
             )
 
@@ -202,6 +222,8 @@ class SaveKrumMetricsStrategy(fl.server.strategy.Krum):
             self.prev_global_parameters = selected_params
 
         return aggregated
+
+
 
     def record_centralized_eval(self, rnd: int, loss: float, mta: float, asr: float) -> None:
         self.central_mta_history.append(mta)

@@ -58,6 +58,9 @@ class SaveMultiKrumMetricsStrategy(fl.server.strategy.FedAvg):
         # Track previous global model (g_{t-1}) to send to clients
         self.prev_global_parameters: Optional[Parameters] = None
 
+        self._cid_to_partition: Dict[str, int] = {}
+        self._last_round_malicious_partitions: set[int] = set()
+
     # -------------------------------------------------------
     # Utility helpers
     # -------------------------------------------------------
@@ -91,6 +94,7 @@ class SaveMultiKrumMetricsStrategy(fl.server.strategy.FedAvg):
         parameters: Parameters,
         client_manager: ClientManager,
     ):
+        self._cid_to_partition.clear()
         self._global_parameters_for_round = parameters
 
         num_available = len(client_manager.all())
@@ -100,6 +104,10 @@ class SaveMultiKrumMetricsStrategy(fl.server.strategy.FedAvg):
 
         num_malicious = min(self.num_of_malicious_clients_per_round, len(sampled_ids))
         malicious_ids = random.sample(sampled_ids, num_malicious)
+
+        self._last_round_malicious_partitions = {
+            self._cid_to_partition[cid] for cid in malicious_ids
+        }
 
         fit_ins_list = []
         for client in sampled_clients:
@@ -120,6 +128,10 @@ class SaveMultiKrumMetricsStrategy(fl.server.strategy.FedAvg):
             else:
                 config["prev_global_tensors_hex"] = "[]"
                 config["prev_global_tensor_type"] = "numpy.ndarray"
+
+            self._cid_to_partition[client.cid] = int(
+                client.properties.get("partition_id", -1)
+            )
 
             fit_ins_list.append((client, FitIns(parameters, config)))
 
@@ -203,19 +215,26 @@ class SaveMultiKrumMetricsStrategy(fl.server.strategy.FedAvg):
         selected_idx = np.argsort(scores)[:k].tolist()
         selected_cids = [client_cids[i] for i in selected_idx]
 
+        selected_partitions = [
+            self._cid_to_partition.get(cid, -1)
+            for cid in selected_cids
+        ]
+
+        attacker_selected = any(
+            pid in self._last_round_malicious_partitions
+            for pid in selected_partitions
+        )
+
         print(
             f"[Round {server_round}] Multi-Krum selected k={k}/{n} "
-            f"(f={f}, m={m}). Selected CIDs={selected_cids}"
-        )
-
-        is_attacker_selected = any(
-            cid in self._last_round_malicious_ids for cid in selected_cids
+            f"(f={f}, m={m})."
         )
 
         print(
-            f"[Round {server_round}][Multi-Krum] "
-            f"Attacker selected={is_attacker_selected}"
+            f"Selected partitions={selected_partitions}, "
+            f"Attacker selected={attacker_selected}"
         )
+
 
         # -------- SAFE AGGREGATION --------
 
