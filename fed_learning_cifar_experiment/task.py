@@ -284,6 +284,7 @@ def train_constrain_and_scale(
             # (2) direction camouflage
             if d_unit is not None and lambda_dir > 0.0:
                 delta_norm = torch.norm(delta) + 1e-12
+                delta_norm = torch.sqrt(torch.sum(delta * delta) + 1e-12)
                 delta_unit = delta / delta_norm
                 cos = torch.dot(delta_unit, d_unit).clamp(-1.0, 1.0)
                 loss += camouflage_scale * lambda_dir * (1.0 - cos)
@@ -291,6 +292,7 @@ def train_constrain_and_scale(
             # (3) target-norm matching
             if target_delta_norm is not None and lambda_target_norm > 0.0:
                 delta_norm = torch.norm(delta) + 1e-12
+                delta_norm = torch.sqrt(torch.sum(delta * delta) + 1e-12)
                 loss += camouflage_scale * lambda_target_norm * (
                         delta_norm - target_delta_norm
                 ) ** 2
@@ -304,8 +306,11 @@ def train_constrain_and_scale(
 
             # (5) CRITICAL: prevent delta collapsing to zero
             if target_delta_norm is not None:
-                min_attack_norm = 0.05 * target_delta_norm
-                loss += F.relu(min_attack_norm - torch.norm(delta)) ** 2
+                min_attack_norm = 0.05 * target_delta_norm  # tune 0.02–0.10
+                min_sq = (min_attack_norm ** 2)
+
+                delta_sq = torch.sum(delta * delta)  # ||delta||^2
+                loss += F.relu(min_sq - delta_sq) ** 2
 
             loss.backward()
             optimizer.step()
