@@ -269,53 +269,43 @@ def train_constrain_and_scale(
             # (1) keep update small -> helps Krum distances
             l_norm = torch.mean(delta * delta)
 
-            loss = ce + lambda_norm * l_norm
-
-            # (2) direction camouflage -> helps look like benign drift
-            if d_unit is not None and lambda_dir > 0.0:
-                delta_norm = torch.norm(delta) + 1e-12
-                delta_unit = delta / delta_norm
-                cos = torch.dot(delta_unit, d_unit).clamp(-1.0, 1.0)
-                l_dir = 1.0 - cos
-                loss = loss + lambda_dir * l_dir
-
-            # (3) norm matching -> helps MultiKrum normalize_updates=True
-            if target_delta_norm is not None and lambda_target_norm > 0.0:
-                delta_norm = torch.norm(delta) + 1e-12
-                l_tnorm = (delta_norm - target_delta_norm) ** 2
-                loss = loss + lambda_target_norm * l_tnorm
-
-            # (4) pairwise camouflage (Krum proxy): match benign-like update vector
-            if prev_global_vec is not None and lambda_pair > 0.0:
-                # benign proxy update from last global step
-                delta_ref = (g - g_prev)
-                l_pair = torch.mean((delta - delta_ref) ** 2)
-                loss = loss + lambda_pair * l_pair
-
             # --- Warm-up: let CE dominate early ---
             camouflage_scale = 1.0
-            if prev_global_vec is not None:
-                # Ramp camouflage over epochs
+            if g_prev is not None:
                 warmup_epochs = max(1, epochs // 3)
-                camouflage_scale = min(1.0, epoch / max(1, epochs // 3))
+                camouflage_scale = min(1.0, epoch / warmup_epochs)
 
             # Base task objective
             loss = ce
 
             # (1) norm camouflage
-            loss += camouflage_scale * lambda_norm * l_norm
+            loss += camouflage_scale * lambda_norm * torch.mean(delta * delta)
 
             # (2) direction camouflage
             if d_unit is not None and lambda_dir > 0.0:
-                loss += camouflage_scale * lambda_dir * l_dir
+                delta_norm = torch.norm(delta) + 1e-12
+                delta_unit = delta / delta_norm
+                cos = torch.dot(delta_unit, d_unit).clamp(-1.0, 1.0)
+                loss += camouflage_scale * lambda_dir * (1.0 - cos)
 
             # (3) target-norm matching
             if target_delta_norm is not None and lambda_target_norm > 0.0:
-                loss += camouflage_scale * lambda_target_norm * l_tnorm
+                delta_norm = torch.norm(delta) + 1e-12
+                loss += camouflage_scale * lambda_target_norm * (
+                        delta_norm - target_delta_norm
+                ) ** 2
 
             # (4) pairwise Krum-proxy camouflage
             if g_prev is not None and lambda_pair > 0.0:
-                loss += camouflage_scale * lambda_pair * l_pair
+                delta_ref = (g - g_prev)
+                loss += camouflage_scale * lambda_pair * torch.mean(
+                    (delta - delta_ref) ** 2
+                )
+
+            # (5) CRITICAL: prevent delta collapsing to zero
+            if target_delta_norm is not None:
+                min_attack_norm = 0.05 * target_delta_norm
+                loss += F.relu(min_attack_norm - torch.norm(delta)) ** 2
 
             loss.backward()
             optimizer.step()
