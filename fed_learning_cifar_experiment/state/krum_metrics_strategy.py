@@ -1,6 +1,7 @@
 import json
 import random
 import inspect
+import traceback
 from typing import Dict, List, Optional, Tuple, Any
 
 import flwr as fl
@@ -90,10 +91,30 @@ class SaveKrumMetricsStrategy(fl.server.strategy.Krum):
             return self._cid_to_partition[client.cid]
 
         try:
-            res = client.get_properties(GetPropertiesIns(config={}), timeout=5.0)
-            pid = int(res.properties.get("partition_id", -1))
-        except Exception:
-            print("Exception while getting partition_id for client {}".format(client.cid))
+            res = client.get_properties(GetPropertiesIns(config={}), timeout=5.0, group_id=None)
+
+            if res is None:
+                raise RuntimeError("get_properties returned None")
+
+            if not hasattr(res, "properties"):
+                raise RuntimeError(f"Invalid GetPropertiesRes: {res}")
+
+            if "partition_id" not in res.properties:
+                raise KeyError(f"'partition_id' missing in properties: {res.properties}")
+
+            pid_raw = res.properties["partition_id"]
+            pid = int(pid_raw)
+
+        except Exception as e:
+            print("=" * 80)
+            print("[ERROR] Failed to fetch partition_id")
+            print(f"CID            : {client.cid}")
+            print(f"Client type    : {type(client)}")
+            print(f"Exception type : {type(e).__name__}")
+            print(f"Exception msg  : {e}")
+            print("Stack trace:")
+            traceback.print_exc()
+            print("=" * 80)
             pid = -1
 
         self._cid_to_partition[client.cid] = pid
