@@ -39,6 +39,8 @@ class FlowerClient(NumPyClient):
 
 
     def fit(self, parameters, config):
+        benign_epochs = self.local_epochs
+        attack_epochs = self.local_epochs
         set_weights(self.net, parameters)
         init_state = {k: v.cpu().clone() for k, v in self.net.state_dict().items()}
         init_vec = parameters_to_vector(self.net.parameters()).detach().cpu().clone()
@@ -96,7 +98,7 @@ class FlowerClient(NumPyClient):
                 print("Global Attack In Progress #Client ID: " + str(partition_id))
                 self.training_set, _ = load_data(partition_id, num_partitions, alpha_val=0.9, backdoor_enabled=True)
                 self.client_state.config_records["num_backdoor_counts"]["count"] += 1
-                local_epochs = 40
+                attack_epochs = 40
                 learning_rate = 0.01
                 #print("Incremented attack count to " + str(self.client_state.config_records["num_backdoor_counts"]))
             else:
@@ -109,7 +111,7 @@ class FlowerClient(NumPyClient):
                 print("Global Random Attack Injected #Client ID: " + str(partition_id) + " #Round: " + str(current_round))
                 is_attacking_round = True
                 self.training_set, _ = load_data(partition_id, num_partitions, alpha_val=0.9, backdoor_enabled=True)
-                local_epochs = 40
+                attack_epochs = 40
                 learning_rate = 0.01
             else:
                 self.training_set, _ = load_data(partition_id, num_partitions, alpha_val=0.9)
@@ -125,7 +127,7 @@ class FlowerClient(NumPyClient):
                     alpha_val=0.9,
                     backdoor_enabled=True
                 )
-                local_epochs = 40
+                attack_epochs = 40
                 learning_rate = 0.01
             else:
                 self.training_set, _ = load_data(
@@ -144,11 +146,11 @@ class FlowerClient(NumPyClient):
                 # --- DEBUG METRICS START ---
                 # print(f"\n--- DEBUG: ATTACKER (Client {partition_id}, Round {config.get('current-round', 'N/A')}) ---")
                 # print(f"--- DEBUG: Initial global model norm (||G_t||): {init_vec.norm().item():.6f}")
-                local_epochs = self.local_epochs
+                attack_epochs = 40
                 train_loss, final_vec = train_backdoor(
                     self.net,
                     self.training_set,
-                    local_epochs,
+                    attack_epochs,
                     self.device,
                     learning_rate
                 )
@@ -175,6 +177,7 @@ class FlowerClient(NumPyClient):
                     backdoor_enabled=False
                 )
 
+
                 backdoor_training_set, _ = load_data(
                     partition_id,
                     num_partitions,
@@ -189,7 +192,7 @@ class FlowerClient(NumPyClient):
                 clean_loss, clean_vec = train(
                     net_clean,
                     clean_training_set,
-                    epochs=local_epochs,  # or local_epochs, but you used 40 for attack
+                    epochs=benign_epochs,  # or local_epochs, but you used 40 for attack
                     device=self.device,
                     lr=0.005  # benign-like LR (match your honest clients)
                 )
@@ -218,7 +221,7 @@ class FlowerClient(NumPyClient):
                     clean_delta=clean_delta,
                     ref_clean_deltas=ref_deltas,
 
-                    epochs=local_epochs,  # you set local_epochs=40 for attacker
+                    epochs=attack_epochs,  # you set local_epochs=40 for attacker
                     lr=learning_rate,  # you set 0.01 for attacker
                     label_smoothing=0.0,
                     weight_decay=0.0,
@@ -275,7 +278,7 @@ class FlowerClient(NumPyClient):
             train_loss, final_vec = train(
                 self.net,
                 self.training_set,
-                local_epochs,
+                benign_epochs,
                 self.device,
                 learning_rate
             )
