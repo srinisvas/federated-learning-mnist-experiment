@@ -177,25 +177,30 @@ class SaveKrumMetricsStrategy(fl.server.strategy.Krum):
     def aggregate_fit(self, rnd, results, failures):
         aggregated = super().aggregate_fit(rnd, results, failures)
 
+        cid_to_partition = {}
+
         if aggregated and aggregated[0] is not None:
             selected_params = aggregated[0]
 
-            # Identify which client was selected by Krum
             selected_cid = None
-            for client_proxy, fit_res in results:
-                if fit_res.parameters.tensors == selected_params.tensors:
-                    selected_cid = client_proxy.cid
-                    break
+            selected_partition_id = None
 
-            is_attacker_selected = (
-                    selected_cid is not None
-                    and selected_cid in getattr(self, "_last_round_malicious_ids", set())
-            )
+            for client_proxy, fit_res in results:
+                cid = client_proxy.cid
+                partition_id = fit_res.metrics.get("partition_id")
+
+                cid_to_partition[cid] = partition_id
+
+                # safer comparison
+                if fit_res.parameters is selected_params:
+                    selected_cid = cid
+                    selected_partition_id = partition_id
+                    break
 
             print(
                 f"[Round {rnd}][Krum] "
                 f"Selected CID={selected_cid}, "
-                f"Attacker selected={is_attacker_selected}"
+                f"PartitionID={selected_partition_id}"
             )
 
             # Keep your existing behavior
