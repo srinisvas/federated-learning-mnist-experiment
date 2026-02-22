@@ -247,7 +247,7 @@ def train_constrain_and_scale_krum_proxy(
                     + lambda_norm_match * norm_match
                     + lambda_centroid * centroid_loss
                     + lambda_krum_proxy * knn_loss
-                    + 0.5 * anchor_loss
+                    #+ 0.5 * anchor_loss
             )
 
             loss.backward()
