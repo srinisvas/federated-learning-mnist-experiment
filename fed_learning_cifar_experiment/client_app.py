@@ -200,6 +200,9 @@ class FlowerClient(NumPyClient):
 
                 # 2) Build local "peer" reference clean deltas (bootstrapped)
                 # Keep small for speed. Need at least krum_k+1.
+
+                shared_seed = int(config.get("current-round", 0)) * 1000
+
                 ref_deltas = build_reference_clean_deltas(
                     net=net_ref,  # base architecture (untrained clone is fine)
                     training_data=clean_training_set,
@@ -208,7 +211,7 @@ class FlowerClient(NumPyClient):
                     epochs=1,
                     lr=0.005,
                     num_refs=16,
-                    seed_base=1337 + int(partition_id),
+                    seed_base=shared_seed,
                     label_smoothing=0.05,
                 )
 

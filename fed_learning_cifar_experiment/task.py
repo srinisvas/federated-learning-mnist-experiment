@@ -117,9 +117,9 @@ def train_constrain_and_scale_krum_proxy(
     # Camouflage weights
     lambda_match_clean: float = 0.0,        # ||delta_adv - delta_clean||^2
     lambda_dir: float = 0.2,                # align direction with delta_clean
-    lambda_norm_match: float = 1.0,         # match ||delta_adv|| to ||delta_clean||
-    lambda_krum_proxy: float = 1.0, # Krum score proxy weight
-    lambda_centroid: float = 0.5,
+    lambda_norm_match: float = 0.5,         # match ||delta_adv|| to ||delta_clean||
+    lambda_krum_proxy: float = 0.5, # Krum score proxy weight
+    lambda_centroid: float = 1.5,
     # Krum proxy config
     krum_k: int = 7,                        # sum distances to K nearest reference deltas
     ref_scale: float = 1.0,                 # scale references (usually 1.0)
@@ -237,8 +237,10 @@ def train_constrain_and_scale_krum_proxy(
             collapse_penalty = F.relu(min_norm - adv_norm) ** 2
             """
 
+            ce_weight = 1.0 if epoch < 1 else 0.1
+
             loss = (
-                    ce
+                    ce_weight * ce
                     + lambda_dir * dir_loss
                     + lambda_norm_match * norm_match
                     + lambda_centroid * centroid_loss
