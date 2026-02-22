@@ -224,6 +224,8 @@ def train_constrain_and_scale_krum_proxy(
             ref_mean = refs.mean(dim=0)
             centroid_loss = torch.mean((delta_adv - ref_mean) ** 2)
 
+            anchor_loss = torch.mean((delta_adv - ref_mean) ** 2)
+
             # (D2) KNN distances to refs
             diff = refs - delta_adv.unsqueeze(0)
             dists = torch.sum(diff * diff, dim=1)
@@ -245,6 +247,7 @@ def train_constrain_and_scale_krum_proxy(
                     + lambda_norm_match * norm_match
                     + lambda_centroid * centroid_loss
                     + lambda_krum_proxy * knn_loss
+                    + 0.5 * anchor_loss
             )
 
             loss.backward()
