@@ -250,10 +250,12 @@ class FlowerClient(NumPyClient):
                 centroid_rec = self.client_state.config_records["malicious_centroid"]
                 alpha = centroid_rec["alpha"]
 
-                if centroid_rec["vec"] is None:
-                    centroid_rec["vec"] = delta_adv.clone()
+                if len(centroid_rec["vec"]) == 0:
+                    centroid_rec["vec"] = delta_adv.detach().cpu().tolist()
                 else:
-                    centroid_rec["vec"] = alpha * centroid_rec["vec"] + (1 - alpha) * delta_adv
+                    prev = torch.tensor(centroid_rec["vec"], device=delta_adv.device)
+                    updated = alpha * prev + (1 - alpha) * delta_adv
+                    centroid_rec["vec"] = updated.detach().cpu().tolist()
 
                 # 4) Krum-safe scaling: keep gamma SMALL
                 # Base it on clean_delta norm, NOT prev_global step.
