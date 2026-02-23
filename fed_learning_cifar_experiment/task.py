@@ -198,9 +198,10 @@ def train_constrain_and_scale_krum_proxy(
             # ---- Anchor loss: pull toward persistent malicious centroid ----
             anchor_loss = torch.zeros((), device=device)
 
-            if malicious_centroid is not None:
-                centroid = malicious_centroid.to(device)
+            if malicious_centroid is not None and len(malicious_centroid) > 0:
+                centroid = torch.tensor(malicious_centroid, device=device)
                 anchor_loss = torch.mean((delta_adv - centroid) ** 2)
+
 
             adv_norm = torch.norm(delta_adv) + eps
             adv_unit = delta_adv / adv_norm
@@ -247,7 +248,7 @@ def train_constrain_and_scale_krum_proxy(
 
             ce_weight = 1.0 if epoch < 1 else 0.1
 
-            anchor_w = 1.0 if epoch < 1 else 0.3
+            anchor_w = 0.3 if epoch < 1 else 1.0
 
             loss = (
                     ce_weight * ce
@@ -281,7 +282,23 @@ def train_constrain_and_scale_krum_proxy(
                     delta_adv.mul_(hi / adv_norm)
                     vector_to_parameters(g + delta_adv, net.parameters())
 
-    return parameters_to_vector(net.parameters()).detach().cpu().clone()
+    final_vec = parameters_to_vector(net.parameters()).detach().cpu()
+    delta_final = final_vec - init_vec_cpu
+
+    # Update malicious centroid (EMA-style)
+    if malicious_centroid is not None:
+        delta_list = delta_final.tolist()
+
+        if len(malicious_centroid) == 0:
+            malicious_centroid[:] = delta_list
+        else:
+            alpha = 0.90
+            prev = torch.tensor(malicious_centroid)
+            new = alpha * prev + (1 - alpha) * delta_final
+            malicious_centroid[:] = new.tolist()
+
+    return final_vec.clone()
+
 
 def load_data(partition_id: int, num_partitions: int, alpha_val: float, backdoor_enabled: bool = False,
               target_label: int = 2, poison_fraction: float = 0.1):

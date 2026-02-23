@@ -34,7 +34,7 @@ class FlowerClient(NumPyClient):
         # ---- Persistent malicious centroid (EMA) ----
         if "malicious_centroid" not in self.client_state.config_records:
             self.client_state.config_records["malicious_centroid"] = ConfigRecord({
-                "vec": None,
+                "vec": [],
                 "alpha": 0.90,  # EMA decay
             })
 
