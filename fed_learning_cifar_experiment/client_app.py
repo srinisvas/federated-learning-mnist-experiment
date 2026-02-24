@@ -319,19 +319,18 @@ class FlowerClient(NumPyClient):
                     keep_delta_norm=False,
                 )
                 """
-                final_weights = [
-                    v.detach().cpu().numpy()
-                    for v in final_vec.view(-1).split(
-                        [p.numel() for p in self.net.parameters()]
-                    )
-                ]
+
+                tmp_net = get_resnet_cnn_model()
+                vector_to_parameters(final_vec.to(self.device), tmp_net.parameters())
+
+                final_weights = get_weights(tmp_net)
 
                 self.prev_global_vec = init_vec.clone()
 
                 return final_weights, len(backdoor_training_set.dataset), {
                     "attack": "constrain-and-scale-krum-proxy",
-                    "clean_step": clean_step,
-                    "attack_step": attack_step,
+                    "clean_step": float(clean_step),
+                    "attack_step": float(attack_step),
                 }
 
         else:
