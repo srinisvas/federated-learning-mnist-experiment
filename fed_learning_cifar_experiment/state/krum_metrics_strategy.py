@@ -223,6 +223,21 @@ class SaveKrumMetricsStrategy(fl.server.strategy.Krum):
         return metrics
 
     def aggregate_fit(self, rnd, results, failures):
+
+        if failures:
+            print(f"\n[Round {rnd}] FIT FAILURES = {len(failures)}")
+            for item in failures:
+                # Flower failures are usually tuples like (client_proxy, exc) or Failure objects
+                try:
+                    if isinstance(item, tuple) and len(item) == 2:
+                        c, err = item
+                        cid = getattr(c, "cid", "unknown")
+                        print(f"  - CID={cid} | failure_type={type(err).__name__} | {err}")
+                    else:
+                        print(f"  - failure_item_type={type(item).__name__} | {item}")
+                except Exception as e:
+                    print(f"  - could not print failure: {e}")
+
         # Let Flower handle edge cases first
         if not results or failures:
             return super().aggregate_fit(rnd, results, failures)
