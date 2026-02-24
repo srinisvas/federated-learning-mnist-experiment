@@ -40,7 +40,7 @@ def server_fn(context: Context):
     # Initialize model parameter
 
     model = get_resnet_cnn_model()
-    if torch.cuda.is_available() and os.path.exists("not_pretrained_cifar_bw8.pth"):
+    if torch.cuda.is_available() and os.path.exists("pretrained_cifar_bw8.pth"):
         print("Loading pretrained global model...")
         model.load_state_dict(torch.load("pretrained_cifar_bw8.pth", map_location="cpu"))
 
