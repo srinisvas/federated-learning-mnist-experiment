@@ -18,6 +18,18 @@ from fed_learning_cifar_experiment.utils.evaluate_attack import evaluate_asr
 
 # Define Flower Client and client_fn
 
+def to_py(v):
+    import torch, numpy as np
+    if v is None:
+        return 0.0
+    if isinstance(v, torch.Tensor):
+        return float(v.detach().cpu().item())
+    if isinstance(v, (np.floating, np.integer)):
+        return v.item()
+    if isinstance(v, (int, float, str, bool)):
+        return v
+    return float(v)
+
 class FlowerClient(NumPyClient):
     def __init__(self, net, local_epochs, context: Context):
         self.test_set = None
@@ -329,8 +341,8 @@ class FlowerClient(NumPyClient):
 
                 return final_weights, len(backdoor_training_set.dataset), {
                     "attack": "constrain-and-scale-krum-proxy",
-                    "clean_step": float(clean_step),
-                    "attack_step": float(attack_step),
+                    "clean_step": to_py(clean_step),
+                    "attack_step": to_py(attack_step),
                 }
 
         else:
