@@ -40,10 +40,10 @@ def server_fn(context: Context):
     # Initialize model parameter
 
     model = get_resnet_cnn_model()
+    print("Attack Selection Mode:", attack_selection_mode)
     if torch.cuda.is_available() and os.path.exists("pretrained_cifar_bw8.pth"):
         print("Loading pretrained global model...")
         model.load_state_dict(torch.load("pretrained_cifar_bw8.pth", map_location="cpu"))
-
     #model_nd_arrays = get_weights(get_resnet_cnn_model())
     model_nd_arrays = get_weights(model)
     #model_nd_arrays = get_weights(get_basic_cnn_model())
