@@ -111,7 +111,6 @@ def train_constrain_and_scale_krum_proxy(
     init_vec: torch.Tensor,                 # global weights w_t as vector
     clean_delta: torch.Tensor,              # delta_clean = w_clean - w_t (CPU or GPU ok)
     ref_clean_deltas=None,                  # optional list[delta_ref] (CPU); if None, built internally'
-    krum_ref_delta: torch.Tensor = None,
     # Optim
     epochs: int = 2,
     lr: float = 0.01,
@@ -120,13 +119,14 @@ def train_constrain_and_scale_krum_proxy(
 
     # Backdoor strength is controlled by your data loader (collate_with_backdoor)
     # Camouflage weights
+    lambda_nearest_ref: float = 0.3,
     lambda_match_clean: float = 0.0,        # ||delta_adv - delta_clean||^2
-    lambda_dir: float = 0.2,                # align direction with delta_clean
+    lambda_dir: float = 0.05,                # align direction with delta_clean
     lambda_norm_match: float = 0.5,         # match ||delta_adv|| to ||delta_clean||
     lambda_krum_proxy: float = 1.0, # Krum score proxy weight
     lambda_centroid: float = 1.2,
     malicious_centroid: torch.Tensor = None,
-    lambda_centroid_self: float = 0.5,
+    lambda_centroid_self: float = 0.2,
     # Krum proxy config
     krum_k: int = 7,                        # sum distances to K nearest reference deltas
     ref_scale: float = 1.0,                 # scale references (usually 1.0)
@@ -217,7 +217,14 @@ def train_constrain_and_scale_krum_proxy(
             """
 
             # disable direction loss for strict Krum
-            dir_loss = torch.zeros((), device=device)
+            #dir_loss = torch.zeros((), device=device)
+
+            # weak direction alignment toward clean local direction
+            if torch.isfinite(clean_norm) and clean_norm > 1e-6 and adv_norm > 1e-6:
+                cos = torch.dot(adv_unit, clean_unit).clamp(-1.0, 1.0)
+                dir_loss = (1.0 - cos)
+            else:
+                dir_loss = torch.zeros((), device=device)
 
             # (C) norm matching to clean update magnitude
             if torch.isfinite(clean_norm):
@@ -228,29 +235,23 @@ def train_constrain_and_scale_krum_proxy(
             # (D) Krum-score proxy: sum of distances to K nearest refs
 
             # (D1) centroid of benign-like references
-            ref_mean = refs.mean(dim=0)
+            ref_mean = refs.median(dim=0).values
             centroid_loss = torch.mean((delta_adv - ref_mean) ** 2)
 
-            if krum_ref_delta is not None:
-                krum_ref_delta = krum_ref_delta.to(device)
-                centroid_loss += lambda_centroid_self * torch.mean(
-                    (delta_adv - krum_ref_delta) ** 2
-                )
-
-            if (
-                    malicious_centroid is not None
-                    and krum_ref_delta is None
-            ):
+            if malicious_centroid is not None:
                 centroid_loss += lambda_centroid_self * torch.mean(
                     (delta_adv - malicious_centroid.to(device)) ** 2
                 )
 
             # (D2) KNN distances to refs
             diff = refs - delta_adv.unsqueeze(0)
-            dists = torch.mean(diff * diff, dim=1)
+            dists = torch.sum(diff * diff, dim=1)
             k = min(krum_k, dists.numel())
             knn_vals, _ = torch.topk(dists, k=k, largest=False)
             knn_loss = torch.mean(knn_vals)
+
+            #Nearest Reference Loss
+            nearest_ref_loss = torch.min(dists)
 
             # (E) prevent collapse to zero
             """
@@ -260,21 +261,14 @@ def train_constrain_and_scale_krum_proxy(
 
             ce_weight = 1.0 if epoch < 2 else 0.5
 
-            print(
-                f"[Attack][Epoch {epoch}] "
-                f"CE={ce.item():.6f} "
-                f"NORM={norm_match.item():.6f} "
-                f"CENT={centroid_loss.item():.6f} "
-                f"KNN={knn_loss.item():.6f} "
-                f"||delta||={adv_norm.item():.6f}"
-            )
-
             loss = (
                     ce_weight * ce
                     + lambda_dir * dir_loss
                     + lambda_norm_match * norm_match
                     + lambda_centroid * centroid_loss
                     + lambda_krum_proxy * knn_loss
+                    + lambda_match_clean * match_clean
+                    + lambda_nearest_ref * nearest_ref_loss
             )
 
             loss.backward()
@@ -290,8 +284,8 @@ def train_constrain_and_scale_krum_proxy(
                 target_norm = ref_norms.median().detach()
 
                 # allow small slack
-                lo = 0.965 * target_norm
-                hi = 1.035 * target_norm
+                lo = 0.98 * target_norm
+                hi = 1.02 * target_norm
 
                 if adv_norm < lo:
                     delta_adv.mul_(lo / adv_norm)

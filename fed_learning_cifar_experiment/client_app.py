@@ -44,12 +44,6 @@ class FlowerClient(NumPyClient):
 
 
     def fit(self, parameters, config):
-        krum_ref_delta = None
-        if "krum_ref_delta" in config and config["krum_ref_delta"] is not None:
-            krum_ref_delta = torch.tensor(
-                json.loads(config["krum_ref_delta"]),
-                dtype=torch.float32,
-            )
         benign_epochs = self.local_epochs
         attack_epochs = self.local_epochs
         set_weights(self.net, parameters)
@@ -209,6 +203,16 @@ class FlowerClient(NumPyClient):
                 )
                 clean_delta = (clean_vec - init_vec.cpu()).detach().cpu()
 
+                # --- Load malicious centroid state ---
+                mc_state = self.client_state.config_records["malicious_centroid"]
+
+                mc_vec = mc_state.get("vec", [])
+                alpha = float(mc_state.get("alpha", 0.9))
+
+                malicious_centroid = None
+                if mc_vec:
+                    malicious_centroid = torch.tensor(mc_vec, dtype=torch.float32)
+
                 # 2) Build local "peer" reference clean deltas (bootstrapped)
                 # Keep small for speed. Need at least krum_k+1.
 
@@ -221,7 +225,7 @@ class FlowerClient(NumPyClient):
                     init_vec=init_vec.cpu(),
                     epochs=benign_epochs,
                     lr=0.005,
-                    num_refs=16,
+                    num_refs=24,
                     seed_base=shared_seed,
                     label_smoothing=0.05,
                 )
@@ -234,17 +238,17 @@ class FlowerClient(NumPyClient):
                     init_vec=init_vec.cpu(),
                     clean_delta=clean_delta,
                     ref_clean_deltas=ref_deltas,
-                    krum_ref_delta=krum_ref_delta,
-                    epochs=attack_epochs,  # you set local_epochs=40 for attacker
+                    malicious_centroid=malicious_centroid,
+                    epochs=attack_epochs,
                     lr=0.005,  # you set 0.01 for attacker
                     label_smoothing=0.0,
                     weight_decay=0.0,
 
-                    lambda_match_clean=0.0,
-                    lambda_dir=0.00,
-                    lambda_norm_match=0.3,
-                    lambda_krum_proxy=0.5,
-                    lambda_centroid = 0.8,
+                    lambda_match_clean=0.15,
+                    lambda_dir=0.05,
+                    lambda_norm_match=0.25,
+                    lambda_krum_proxy=1.5,
+                    lambda_centroid = 0.25,
 
                     krum_k=5,  # if n=10 and f=1 => n-f-2=7, but proxy 3-5 is ok
                     min_norm_frac=0.10,
@@ -286,6 +290,25 @@ class FlowerClient(NumPyClient):
 
                 delta_adv = final_vec - init_vec.cpu()
                 ref_mean = torch.stack(ref_deltas).mean(dim=0)
+
+                # --- Update malicious centroid ---
+                delta_adv = (final_vec - init_vec.cpu()).detach().cpu()
+
+                mc_state = self.client_state.config_records["malicious_centroid"]
+
+                alpha = float(mc_state.get("alpha", 0.9))
+                prev_vec = mc_state.get("vec", [])
+
+                if prev_vec:
+                    prev_centroid = torch.tensor(prev_vec, dtype=torch.float32)
+                    new_centroid = alpha * prev_centroid + (1.0 - alpha) * delta_adv
+                else:
+                    new_centroid = delta_adv.clone()
+
+                self.client_state.config_records["malicious_centroid"] = ConfigRecord({
+                    "vec": new_centroid.tolist(),
+                    "alpha": alpha,
+                })
 
                 print(
                     f"[Client {partition_id}][Round {current_round}] "
