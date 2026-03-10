@@ -281,8 +281,8 @@ def train_constrain_and_scale_krum_proxy(
                 target_norm = ref_norms.median().detach()
 
                 # allow small slack
-                lo = 0.98 * target_norm
-                hi = 1.02 * target_norm
+                lo = 0.97 * target_norm
+                hi = 1.03 * target_norm
 
                 if adv_norm < lo:
                     delta_adv.mul_(lo / adv_norm)
