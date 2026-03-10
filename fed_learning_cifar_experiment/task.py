@@ -247,7 +247,7 @@ def train_constrain_and_scale_krum_proxy(
 
             # (D2) KNN distances to refs
             diff = refs - delta_adv.unsqueeze(0)
-            dists = torch.sum(diff * diff, dim=1)
+            dists = torch.mean(diff * diff, dim=1)
             k = min(krum_k, dists.numel())
             knn_vals, _ = torch.topk(dists, k=k, largest=False)
             knn_loss = torch.mean(knn_vals)
@@ -258,7 +258,16 @@ def train_constrain_and_scale_krum_proxy(
             collapse_penalty = F.relu(min_norm - adv_norm) ** 2
             """
 
-            ce_weight = 1.0 if epoch < 1 else 0.1
+            ce_weight = 1.0 if epoch < 2 else 0.5
+
+            print(
+                f"[Attack][Epoch {epoch}] "
+                f"CE={ce.item():.6f} "
+                f"NORM={norm_match.item():.6f} "
+                f"CENT={centroid_loss.item():.6f} "
+                f"KNN={knn_loss.item():.6f} "
+                f"||delta||={adv_norm.item():.6f}"
+            )
 
             loss = (
                     ce_weight * ce
