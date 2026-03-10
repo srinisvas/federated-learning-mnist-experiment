@@ -138,7 +138,7 @@ class FlowerClient(NumPyClient):
                     alpha_val=0.9,
                     backdoor_enabled=True
                 )
-                attack_epochs = 5
+                attack_epochs = 10
                 learning_rate = 0.005
             else:
                 self.training_set, _ = load_data(
@@ -240,10 +240,11 @@ class FlowerClient(NumPyClient):
                     label_smoothing=0.0,
                     weight_decay=0.0,
 
-                    lambda_match_clean=0.15,
-                    lambda_dir=0.05,
+                    lambda_match_clean=0.0,
+                    lambda_dir=0.00,
                     lambda_norm_match=0.45,
                     lambda_krum_proxy=1.8,
+                    lambda_centroid = 1.2,
 
                     krum_k=5,  # if n=10 and f=1 => n-f-2=7, but proxy 3-5 is ok
                     min_norm_frac=0.10,
@@ -263,6 +264,7 @@ class FlowerClient(NumPyClient):
                     gamma = 1.0
                 
                 delta_adv = final_vec - init_vec.cpu()
+                ref_mean = torch.stack(ref_deltas).mean(dim=0)
                 dist_to_clean = torch.norm(delta_adv - clean_delta).item()
                 print(f"[Client {partition_id}][Round {current_round}] "
                       f"||Δ_adv||={delta_adv.norm().item():.4f} "
@@ -281,6 +283,16 @@ class FlowerClient(NumPyClient):
                 """
                 vector_to_parameters(final_vec.to(self.device), self.net.parameters())
                 self.prev_global_vec = init_vec.clone()
+
+                delta_adv = final_vec - init_vec.cpu()
+                ref_mean = torch.stack(ref_deltas).mean(dim=0)
+
+                print(
+                    f"[Client {partition_id}][Round {current_round}] "
+                    f"||Δ_adv||={delta_adv.norm().item():.4f} "
+                    f"||Δ_clean||={clean_delta.norm().item():.4f} "
+                    f"dist_to_ref_mean={torch.norm(delta_adv - ref_mean).item():.4f}"
+                )
 
                 return get_weights(self.net), len(backdoor_training_set.dataset), {
                     "attack": "constrain-and-scale-krum-proxy",
