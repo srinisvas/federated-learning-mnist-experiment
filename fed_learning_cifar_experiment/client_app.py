@@ -296,7 +296,7 @@ class FlowerClient(NumPyClient):
 
                 print(
                     f"[Client {partition_id}][Round {current_round}] "
-                    f"ANCHORED ATTACK ||Δ_adv||={delta_adv.norm().item():.4f}"
+                    f"ANCHORED ATTACK ||Δ_adv||={torch.norm(delta_adv).item():.8e}"
                 )
 
                 return get_weights(self.net), len(backdoor_training_set.dataset), {

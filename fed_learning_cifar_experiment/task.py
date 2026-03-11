@@ -197,7 +197,7 @@ def train_anchored_krum_attack(
     distance_penalty=0.15,
     clean_lr=0.05,
     backdoor_lr=0.005,
-    num_refs=5,
+    num_refs=8,
     norm_shrink=0.90,
     lambda_cos=0.60,
     lambda_clean_l2=0.30,
@@ -210,6 +210,19 @@ def train_anchored_krum_attack(
     Weak secondary anchor: local benign reference median
     Keep cosine alignment to preserve directional flexibility
     """
+
+    distance_penalty = float(torch.empty(1).uniform_(0.10, 0.18).item())
+    backdoor_lr = float(torch.empty(1).uniform_(0.003, 0.007).item())
+    norm_shrink = float(torch.empty(1).uniform_(0.72, 0.88).item())
+
+    lambda_cos = float(torch.empty(1).uniform_(0.50, 0.70).item())
+    lambda_clean_l2 = float(torch.empty(1).uniform_(0.20, 0.35).item())
+    lambda_ref_l2 = float(torch.empty(1).uniform_(0.03, 0.12).item())
+
+    s = lambda_cos + lambda_clean_l2 + lambda_ref_l2
+    lambda_cos /= s
+    lambda_clean_l2 /= s
+    lambda_ref_l2 /= s
 
     init_vec_cpu = init_vec.detach().cpu()
     init_vec_dev = init_vec_cpu.to(device)
