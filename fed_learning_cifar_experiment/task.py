@@ -228,7 +228,7 @@ def train_constrain_and_scale_krum_proxy(
 
             # (C) norm matching to clean update magnitude
             if torch.isfinite(clean_norm):
-                norm_match = (adv_norm - clean_norm) ** 2
+                norm_match = ((adv_norm - clean_norm) - 1) ** 2
             else:
                 norm_match = torch.zeros((), device=device)
 
@@ -236,6 +236,7 @@ def train_constrain_and_scale_krum_proxy(
 
             # (D1) centroid of benign-like references
             ref_mean = refs.median(dim=0).values
+            #ref_mean = torch.mean(refs[trimmed_indices], dim=0)
             if malicious_centroid is not None:
                 ref_mean = 0.7 * ref_mean + 0.3 * malicious_centroid.to(device)
             centroid_loss = torch.mean((delta_adv - ref_mean) ** 2)
@@ -276,7 +277,7 @@ def train_constrain_and_scale_krum_proxy(
                     + lambda_krum_proxy * knn_loss
                     + lambda_match_clean * match_clean
                     + lambda_nearest_ref * nearest_ref_loss
-                    + 0.25 * collapse_penalty #Collapse Penalty
+                    #+ 0.25 * collapse_penalty #Collapse Penalty
             )
 
             loss.backward()
