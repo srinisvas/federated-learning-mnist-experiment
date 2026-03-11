@@ -295,7 +295,9 @@ class FlowerClient(NumPyClient):
 
                 self.prev_global_vec = init_vec.clone()
 
-                delta_adv = final_vec - init_vec.cpu()
+                submitted_vec = parameters_to_vector(self.net.parameters()).detach().cpu()
+
+                delta_adv = submitted_vec - init_vec.cpu()
 
                 print(
                     f"[Client {partition_id}][Round {current_round}] "
