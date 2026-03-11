@@ -230,7 +230,12 @@ def train_constrain_and_scale_krum_proxy(
             # (D1) centroid of benign-like references
             ref_mean = refs.median(dim=0).values
 
-            centroid_loss = torch.mean((delta_adv - ref_mean) ** 2)
+            #centroid_loss = torch.mean((delta_adv - ref_mean) ** 2)
+
+            ref_dir = ref_mean / (torch.norm(ref_mean) + eps)
+            adv_dir = delta_adv / (torch.norm(delta_adv) + eps)
+
+            centroid_loss = torch.sum((adv_dir - ref_dir) ** 2)
 
             if krum_ref_delta is not None:
                 krum_ref_delta = krum_ref_delta.to(device)
@@ -277,6 +282,7 @@ def train_constrain_and_scale_krum_proxy(
             )
 
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(net.parameters(), 5.0)
             optimizer.step()
 
             with torch.no_grad():
