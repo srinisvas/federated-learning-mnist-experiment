@@ -124,9 +124,9 @@ def train_constrain_and_scale_krum_proxy(
     lambda_dir: float = 0.2,                # align direction with delta_clean
     lambda_norm_match: float = 0.5,         # match ||delta_adv|| to ||delta_clean||
     lambda_krum_proxy: float = 0.5, # Krum score proxy weight
-    lambda_centroid: float = 1.5,
+    lambda_centroid: float = 3.0,
     malicious_centroid: torch.Tensor = None,
-    lambda_centroid_self: float = 0.3,
+    lambda_centroid_self: float = 1.0,
     # Krum proxy config
     krum_k: int = 7,                        # sum distances to K nearest reference deltas
     ref_scale: float = 1.0,                 # scale references (usually 1.0)
@@ -228,7 +228,7 @@ def train_constrain_and_scale_krum_proxy(
             # (D) Krum-score proxy: sum of distances to K nearest refs
 
             # (D1) centroid of benign-like references
-            ref_mean = refs.mean(dim=0)
+            ref_mean = refs.median(dim=0).values
             centroid_loss = torch.mean((delta_adv - ref_mean) ** 2)
 
             if krum_ref_delta is not None:
@@ -250,7 +250,7 @@ def train_constrain_and_scale_krum_proxy(
             dists = torch.sum(diff * diff, dim=1)
             k = min(krum_k, dists.numel())
             knn_vals, _ = torch.topk(dists, k=k, largest=False)
-            knn_loss = torch.mean(knn_vals)
+            knn_loss = torch.sum(knn_vals)
 
             # (E) prevent collapse to zero
             """
@@ -281,8 +281,8 @@ def train_constrain_and_scale_krum_proxy(
                 target_norm = ref_norms.median().detach()
 
                 # allow small slack
-                lo = 0.95 * target_norm
-                hi = 1.05 * target_norm
+                lo = 0.98 * target_norm
+                hi = 1.02 * target_norm
 
                 if adv_norm < lo:
                     delta_adv.mul_(lo / adv_norm)

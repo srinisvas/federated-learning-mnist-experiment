@@ -221,7 +221,7 @@ class FlowerClient(NumPyClient):
                     init_vec=init_vec.cpu(),
                     epochs=benign_epochs,
                     lr=0.005,
-                    num_refs=16,
+                    num_refs=24,
                     seed_base=shared_seed,
                     label_smoothing=0.05,
                 )
