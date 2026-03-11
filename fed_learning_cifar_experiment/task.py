@@ -99,6 +99,31 @@ def build_reference_clean_deltas(
 
     return refs
 
+def krum_blended_attack(
+    init_vec,
+    clean_vec,
+    backdoor_vec,
+    ref_deltas,
+    alpha=0.8,
+):
+
+    delta_clean = clean_vec - init_vec
+    delta_bd = backdoor_vec - init_vec
+
+    # 1. Blend direction
+    delta_adv = alpha * delta_bd + (1 - alpha) * delta_clean
+
+    # 2. Match benign norm
+    ref_norms = torch.stack([torch.norm(d) for d in ref_deltas])
+    target_norm = ref_norms.median()
+
+    adv_norm = torch.norm(delta_adv)
+
+    if adv_norm > 1e-8:
+        delta_adv = delta_adv * (target_norm / adv_norm)
+
+    return init_vec + delta_adv
+
 def krum_score_proxy(delta, ref_deltas, k):
     diffs = ref_deltas - delta.unsqueeze(0)
     dists = torch.sum(diffs * diffs, dim=1)

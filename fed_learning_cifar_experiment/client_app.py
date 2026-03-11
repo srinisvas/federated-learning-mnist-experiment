@@ -11,7 +11,7 @@ from flwr.common import Parameters, parameters_to_ndarrays
 from fed_learning_cifar_experiment.task import (
     get_weights, load_data, set_weights, test, train, get_resnet_cnn_model,
     get_basic_cnn_model, train_backdoor, krum_safe_scale,
-    train_constrain_and_scale_krum_proxy, build_reference_clean_deltas
+    train_constrain_and_scale_krum_proxy, build_reference_clean_deltas, krum_blended_attack
 )
 from fed_learning_cifar_experiment.utils.evaluate_attack import evaluate_asr
 
@@ -179,7 +179,18 @@ class FlowerClient(NumPyClient):
                 self.prev_global_vec = init_vec.clone()
                 return get_weights(self.net), len(self.training_set.dataset), {"train_loss": train_loss}
 
-            else:
+            elif attack_type == "constrain-and-scale-krum-proxy":
+
+                net_clean = get_resnet_cnn_model()
+                shared_seed = int(config.get("current-round", 0)) * 1000
+
+                backdoor_training_set, _ = load_data(
+                    partition_id,
+                    num_partitions,
+                    alpha_val=0.9,
+                    backdoor_enabled=True
+                )
+
                 clean_training_set, _ = load_data(
                     partition_id,
                     num_partitions,
@@ -187,6 +198,75 @@ class FlowerClient(NumPyClient):
                     backdoor_enabled=False
                 )
 
+                new_refs = build_reference_clean_deltas(
+                    net=net_ref,  # base architecture (untrained clone is fine)
+                    training_data=clean_training_set,
+                    device=self.device,
+                    init_vec=init_vec.cpu(),
+                    epochs=benign_epochs,
+                    lr=0.005,
+                    num_refs=12,
+                    seed_base=shared_seed,
+                    label_smoothing=0.05,
+                )
+
+                ref_state = self.client_state.config_records["ref_memory"]
+
+                ref_state = self.client_state.config_records["ref_memory"]
+                old_refs_json = ref_state.get("refs_json", [])
+
+                refs_combined = []
+
+                if old_refs_json:
+                    for s in old_refs_json:
+                        refs_combined.append(torch.tensor(json.loads(s), dtype=torch.float32))
+
+                refs_combined.extend([r.detach().cpu() for r in new_refs])
+
+                # keep most recent 32
+                refs_combined = refs_combined[-32:]
+
+                self.client_state.config_records["ref_memory"] = ConfigRecord({
+                    "refs_json": [json.dumps(r.tolist()) for r in refs_combined]
+                })
+
+                ref_deltas = refs_combined
+
+                clean_loss, clean_vec = train(
+                    net_clean,
+                    clean_training_set,
+                    benign_epochs,
+                    device=self.device,
+                    lr=0.005
+                )
+
+                bd_loss, bd_vec = train_backdoor(
+                    self.net,
+                    backdoor_training_set,
+                    attack_epochs,
+                    device=self.device,
+                    lr=0.005
+                )
+
+                final_vec = krum_blended_attack(
+                    init_vec,
+                    clean_vec,
+                    bd_vec,
+                    ref_deltas,
+                    alpha=0.8
+                )
+
+                return get_weights(self.net), len(backdoor_training_set.dataset), {
+                    "attack": "constrain-and-scale-krum-proxy-2"
+                }
+
+            else:
+                clean_training_set, _ = load_data(
+                    partition_id,
+                    num_partitions,
+                    alpha_val=0.9,
+                    backdoor_enabled=False
+                )
 
                 backdoor_training_set, _ = load_data(
                     partition_id,
