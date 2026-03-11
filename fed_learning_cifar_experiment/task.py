@@ -186,7 +186,6 @@ def train_hybrid_krum_attack(
 
     return final_vec.detach().cpu().clone()
 
-
 def train_anchored_krum_attack(
     net,
     training_data_clean,
@@ -200,21 +199,25 @@ def train_anchored_krum_attack(
     backdoor_lr=0.005,
     num_refs=5,
     norm_shrink=0.90,
+    lambda_cos=0.60,
+    lambda_clean_l2=0.30,
+    lambda_ref_l2=0.10,
 ):
     """
-    Anchored Krum attack, fixed version.
+    Hybrid anchored Krum attack.
 
-    Key idea:
-    1. Train a clean local model from init_vec
-    2. Start backdoor optimization from clean_vec
-    3. Keep the attack update aligned with the clean update
-    4. Project final update norm to a benign-like magnitude
+    Main anchor: local clean delta
+    Weak secondary anchor: local benign reference median
+    Keep cosine alignment to preserve directional flexibility
     """
 
     init_vec_cpu = init_vec.detach().cpu()
+    init_vec_dev = init_vec_cpu.to(device)
 
-    # Step 1: clean local training
-    clean_net = _clone_net(net)
+    # Step 1: clean local training from exact global weights
+    clean_net = _clone_net(net).to(device)
+    vector_to_parameters(init_vec_dev, clean_net.parameters())
+
     _, clean_vec = train(
         clean_net,
         training_data_clean,
@@ -223,10 +226,25 @@ def train_anchored_krum_attack(
         lr=clean_lr,
     )
     clean_vec_cpu = clean_vec.detach().cpu()
+    clean_vec_dev = clean_vec_cpu.to(device)
+    clean_delta = (clean_vec_dev - init_vec_dev).detach()
 
-    # Step 2: initialize attacker from clean weights
+    # Step 2: benign-like references
+    ref_clean_deltas = build_reference_clean_deltas(
+        net=_clone_net(net),
+        training_data=training_data_clean,
+        device=device,
+        init_vec=init_vec_cpu,
+        epochs=1,
+        lr=clean_lr,
+        num_refs=num_refs,
+    )
+    ref_stack = torch.stack(ref_clean_deltas, dim=0).to(device)
+    ref_anchor = ref_stack.median(dim=0).values.detach()
+
+    # Step 3: initialize attacker from clean weights
     bd_net = _clone_net(net).to(device)
-    vector_to_parameters(clean_vec_cpu.to(device), bd_net.parameters())
+    vector_to_parameters(clean_vec_dev, bd_net.parameters())
 
     criterion = torch.nn.CrossEntropyLoss().to(device)
     optimizer = torch.optim.SGD(
@@ -238,11 +256,7 @@ def train_anchored_krum_attack(
 
     bd_net.train()
 
-    init_vec_dev = init_vec_cpu.to(device)
-    clean_vec_dev = clean_vec_cpu.to(device)
-    clean_delta = (clean_vec_dev - init_vec_dev).detach()
-
-    # Step 3: anchored backdoor optimization
+    # Step 4: anchored backdoor optimization
     for _ in range(epochs_backdoor):
         for batch in training_data_backdoor:
             if isinstance(batch, dict):
@@ -268,33 +282,28 @@ def train_anchored_krum_attack(
             clean_unit = clean_delta / clean_norm
 
             loss_cos = 1.0 - torch.dot(delta_unit, clean_unit).clamp(-1.0, 1.0)
-            loss_l2 = torch.mean((delta - clean_delta) ** 2)
+            loss_clean_l2 = torch.mean((delta - clean_delta) ** 2)
+            loss_ref_l2 = torch.mean((delta - ref_anchor) ** 2)
 
-            loss_anchor = 0.7 * loss_cos + 0.3 * loss_l2
+            loss_anchor = (
+                lambda_cos * loss_cos
+                + lambda_clean_l2 * loss_clean_l2
+                + lambda_ref_l2 * loss_ref_l2
+            )
+
             loss = loss_ce + distance_penalty * loss_anchor
-
             loss.backward()
             optimizer.step()
 
-    # Step 4: final malicious update in the SAME frame as benign refs
+    # Step 5: final malicious update in global frame
     final_bd_vec = parameters_to_vector(bd_net.parameters()).detach().cpu()
     adv_delta = final_bd_vec - init_vec_cpu
 
-    # Step 5: benign reference updates
-    ref_clean_deltas = build_reference_clean_deltas(
-        net=_clone_net(net),
-        training_data=training_data_clean,
-        device=device,
-        init_vec=init_vec_cpu,
-        epochs=1,
-        num_refs=num_refs,
-    )
-
+    # Step 6: norm match to benign-like scale
     ref_norms = torch.stack([torch.norm(d) for d in ref_clean_deltas])
     target_norm = ref_norms.median()
     adv_norm = torch.norm(adv_delta)
 
-    # Slightly smaller than typical benign norm is usually safer for Krum
     if adv_norm > 1e-8:
         adv_delta = adv_delta * ((norm_shrink * target_norm) / adv_norm)
 
