@@ -137,7 +137,7 @@ class FlowerClient(NumPyClient):
                     alpha_val=0.9,
                     backdoor_enabled=True
                 )
-                attack_epochs = 10
+                attack_epochs = 5
                 learning_rate = 0.005
             else:
                 self.training_set, _ = load_data(
