@@ -313,7 +313,7 @@ def train_anchored_krum_attack(
     adv_delta = final_bd_vec - init_vec_cpu
 
     if torch.norm(adv_delta) < 1e-6:
-        adv_delta = clean_delta.detach().cpu()
+        adv_delta = clean_delta.detach().cpu().clone()
 
     # Step 6: norm match to benign-like scale
     ref_norms = torch.stack([torch.norm(d) for d in ref_clean_deltas])

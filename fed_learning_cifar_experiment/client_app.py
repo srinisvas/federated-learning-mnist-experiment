@@ -277,8 +277,11 @@ class FlowerClient(NumPyClient):
                     backdoor_enabled=True
                 )
 
+                attack_net = get_resnet_cnn_model()
+                set_weights(attack_net, parameters)
+
                 final_vec = train_anchored_krum_attack(
-                    net=self.net,
+                    net=attack_net,
                     training_data_clean=clean_training_set,
                     training_data_backdoor=backdoor_training_set,
                     device=self.device,
