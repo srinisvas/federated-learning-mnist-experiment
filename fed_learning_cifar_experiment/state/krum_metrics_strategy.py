@@ -283,6 +283,14 @@ class SaveKrumMetricsStrategy(fl.server.strategy.Krum):
         X = np.stack(client_updates)
         n = len(X)
 
+        # ---- Compute reference vectors ----
+        centroid = np.mean(X, axis=0)
+
+        norms = np.linalg.norm(X, axis=1)
+
+        def cosine(a, b):
+            return np.dot(a, b) / ((np.linalg.norm(a) + 1e-12) * (np.linalg.norm(b) + 1e-12))
+
         # Byzantine count (version-safe)
         f = getattr(self, "num_byzantine", None)
         if f is None:
@@ -304,14 +312,37 @@ class SaveKrumMetricsStrategy(fl.server.strategy.Krum):
             scores[client_ids[i]] = score
 
         # ---- Print scores ----
-        print(f"\n[Round {rnd}][Krum Scores]")
+
+        print(f"\n[Round {rnd}][Krum Scores + Geometry]")
         for cid in sorted(scores, key=scores.get):
+            i = client_ids.index(cid)
             proxy = next(p for p in client_proxies if p.cid == cid)
             pid = self._get_partition_id(proxy)
+
+            vec = X[i]
+
+            norm = norms[i]
+            cos_centroid = cosine(vec, centroid)
+            dist_centroid = np.linalg.norm(vec - centroid)
+
+            # distance to previous global delta
+            if self.last_krum_selected_delta is not None:
+                prev = self.last_krum_selected_delta
+                cos_prev = cosine(vec, prev)
+                dist_prev = np.linalg.norm(vec - prev)
+            else:
+                cos_prev = 0.0
+                dist_prev = 0.0
+
             print(
-                f"  CID={cid:>6} | "
+                f"CID={cid:>6} | "
                 f"Partition={pid:>3} | "
-                f"Score={scores[cid]:.6e}"
+                f"Score={scores[cid]:.6e} | "
+                f"Norm={norm:.4f} | "
+                f"CosCentroid={cos_centroid:.4f} | "
+                f"DistCentroid={dist_centroid:.4f} | "
+                f"CosPrev={cos_prev:.4f} | "
+                f"DistPrev={dist_prev:.4f}"
             )
 
         # ---- Select winner ----
@@ -319,6 +350,23 @@ class SaveKrumMetricsStrategy(fl.server.strategy.Krum):
         selected_idx = client_ids.index(selected_cid)
         selected_params = results[selected_idx][1].parameters
 
+        winner_vec = X[selected_idx]
+
+        print(f"\n[Round {rnd}] Distance to Krum Winner")
+
+        for i, cid in enumerate(client_ids):
+            proxy = next(p for p in client_proxies if p.cid == cid)
+            pid = self._get_partition_id(proxy)
+
+            dist = np.linalg.norm(X[i] - winner_vec)
+            cos = cosine(X[i], winner_vec)
+
+            print(
+                f"CID={cid:>6} | "
+                f"Partition={pid:>3} | "
+                f"DistWinner={dist:.4f} | "
+                f"CosWinner={cos:.4f}"
+            )
 
         # ---- Store Krum winner state (for next round) ----
         self.last_krum_selected_cid = selected_cid
