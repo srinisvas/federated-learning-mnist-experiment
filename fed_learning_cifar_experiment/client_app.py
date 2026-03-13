@@ -303,6 +303,17 @@ class FlowerClient(NumPyClient):
                 ref_norms = torch.norm(refs_tensor, dim=1)
                 target_norm = ref_norms.median()
 
+                # compute benign update magnitude sampled from benign distribution
+                ref_norms = torch.norm(refs_tensor, dim=1)
+
+                mean_norm = ref_norms.mean()
+                std_norm = ref_norms.std()
+
+                target_norm = torch.normal(mean_norm, std_norm)
+
+                # keep it inside benign range
+                target_norm = target_norm.clamp(ref_norms.min(), ref_norms.max())
+
                 # enforce deterministic malicious update
                 delta_adv = delta_dir * target_norm
 
