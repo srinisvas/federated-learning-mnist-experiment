@@ -304,7 +304,7 @@ class FlowerClient(NumPyClient):
                 target_norm = ref_norms.median()
 
                 #New target Norm
-                target_norm = torch.norm(clean_delta)
+                #target_norm = torch.norm(clean_delta)
 
                 # enforce deterministic malicious update
                 delta_adv = delta_dir * target_norm
