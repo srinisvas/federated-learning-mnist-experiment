@@ -285,6 +285,7 @@ class SaveKrumMetricsStrategy(fl.server.strategy.Krum):
 
         # ---- Compute reference vectors ----
         centroid = np.mean(X, axis=0)
+        centroid_dir = centroid / (np.linalg.norm(centroid) + 1e-12)
 
         norms = np.linalg.norm(X, axis=1)
 
@@ -325,6 +326,22 @@ class SaveKrumMetricsStrategy(fl.server.strategy.Krum):
             cos_centroid = cosine(vec, centroid)
             dist_centroid = np.linalg.norm(vec - centroid)
 
+            # Projection on centroid direction
+            proj_mag = np.dot(vec, centroid_dir)
+            proj_vec = proj_mag * centroid_dir
+
+            # Orthogonal deviation
+            orth_dev = np.linalg.norm(vec - proj_vec)
+
+            dists = np.linalg.norm(X - vec, axis=1)
+            dists = np.delete(dists, i)
+
+            nearest = np.sort(dists)[:k]
+
+            nearest_mean = np.mean(nearest)
+            nearest_max = np.max(nearest)
+            nearest_min = np.min(nearest)
+
             # distance to previous global delta
             if self.last_krum_selected_delta is not None:
                 prev = self.last_krum_selected_delta
@@ -341,6 +358,11 @@ class SaveKrumMetricsStrategy(fl.server.strategy.Krum):
                 f"Norm={norm:.4f} | "
                 f"CosCentroid={cos_centroid:.4f} | "
                 f"DistCentroid={dist_centroid:.4f} | "
+                f"ProjCentroid={proj_mag:.4f} | "
+                f"OrthDev={orth_dev:.4f} | "
+                f"NNmean={nearest_mean:.4f} | "
+                f"NNmax={nearest_max:.4f} | "
+                f"NNmin={nearest_min:.4f} | "
                 f"CosPrev={cos_prev:.4f} | "
                 f"DistPrev={dist_prev:.4f}"
             )
