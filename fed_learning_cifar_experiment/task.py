@@ -127,6 +127,7 @@ def train_constrain_and_scale_krum_proxy(
     lambda_centroid: float = 0.1,
     malicious_centroid: torch.Tensor = None,
     lambda_centroid_self: float = 10.0,
+    lambda_orth_dev = 0.3,
     # Krum proxy config
     krum_k: int = 7,                        # sum distances to K nearest reference deltas
     ref_scale: float = 1.0,                 # scale references (usually 1.0)
@@ -273,12 +274,22 @@ def train_constrain_and_scale_krum_proxy(
 
             ce_weight = 1.0 if epoch < 1 else 0.02
 
+            # (F) Orthogonal loss factor
+
+            centroid_dir = ref_mean / (torch.norm(ref_mean) + eps)
+
+            proj = torch.dot(delta_adv, centroid_dir) * centroid_dir
+            orthogonal_component = delta_adv - proj
+
+            orth_loss = torch.mean(orthogonal_component ** 2)
+
             loss = (
                     ce_weight * ce
                     + lambda_dir * dir_loss
                     + lambda_norm_match * norm_match
                     + lambda_centroid * centroid_loss
                     + lambda_krum_proxy * knn_loss
+                    + lambda_orth_dev * orth_loss
             )
 
             loss.backward()
