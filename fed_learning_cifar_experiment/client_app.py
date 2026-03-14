@@ -309,9 +309,6 @@ class FlowerClient(NumPyClient):
                 # enforce deterministic malicious update
                 delta_adv = delta_dir * target_norm
 
-                #New delta_adv with clean step norm
-                delta_adv = clean_delta / torch.norm(clean_delta) * target_norm
-
                 # reconstruct malicious weights
                 final_vec = init_vec.cpu() + delta_adv
 
