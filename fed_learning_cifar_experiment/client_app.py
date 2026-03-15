@@ -301,7 +301,11 @@ class FlowerClient(NumPyClient):
 
                 # compute benign update magnitude
                 ref_norms = torch.norm(refs_tensor, dim=1)
-                target_norm = ref_norms.median().detach
+                target_norm = ref_norms.median().detach()
+
+                refs_tensor = torch.stack(ref_deltas)
+                ref_norms = torch.norm(refs_tensor, dim=1)
+                target_norm = ref_norms.median().detach()
 
                 target_norm = 0.995 * target_norm
 
@@ -310,7 +314,7 @@ class FlowerClient(NumPyClient):
 
                 # enforce deterministic malicious update
                 delta_adv = delta_dir * target_norm
-                delta_adv = delta_adv * 0.98
+                #delta_adv = delta_adv * 0.98
 
                 # reconstruct malicious weights
                 final_vec = init_vec.cpu() + delta_adv
