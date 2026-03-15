@@ -290,7 +290,7 @@ class FlowerClient(NumPyClient):
                     "attack_step": attack_step,
                 }
                 """
-
+                """New Constrain and Scale with Reference-Based Targeting
                 delta_adv = final_vec - init_vec.cpu()
 
                 # normalize direction
@@ -307,7 +307,7 @@ class FlowerClient(NumPyClient):
                 ref_norms = torch.norm(refs_tensor, dim=1)
                 target_norm = ref_norms.median().detach()
 
-                target_norm = 0.995 * target_norm
+                target_norm = 0.992 * target_norm
 
                 #New target Norm
                 #target_norm = torch.norm(clean_delta)
@@ -315,6 +315,21 @@ class FlowerClient(NumPyClient):
                 # enforce deterministic malicious update
                 delta_adv = delta_dir * target_norm
                 #delta_adv = delta_adv * 0.98
+                """
+                delta_adv = final_vec - init_vec.cpu()
+
+                refs_tensor = torch.stack(ref_deltas)
+
+                dists = torch.norm(refs_tensor - clean_delta.unsqueeze(0), dim=1)
+                closest_idx = torch.argmin(dists)
+                anchor_ref = refs_tensor[closest_idx]
+
+                target_norm = 0.995 * torch.norm(anchor_ref).detach()
+
+                delta_adv = 0.85 * delta_adv + 0.15 * anchor_ref
+
+                delta_dir = delta_adv / (torch.norm(delta_adv) + 1e-12)
+                delta_adv = delta_dir * target_norm
 
                 # reconstruct malicious weights
                 final_vec = init_vec.cpu() + delta_adv
@@ -328,7 +343,6 @@ class FlowerClient(NumPyClient):
                     "clean_step": clean_step,
                     "attack_step": attack_step,
                 }
-
 
         else:
             train_loss, final_vec = train(
