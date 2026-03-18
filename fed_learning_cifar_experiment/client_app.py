@@ -227,6 +227,7 @@ class FlowerClient(NumPyClient):
                 )
 
                 # 3) Run constrained backdoor training using the BACKDOOR loader
+
                 final_vec = train_constrain_and_scale_krum_proxy(
                     net=self.net,
                     training_data=backdoor_training_set,
@@ -234,19 +235,16 @@ class FlowerClient(NumPyClient):
                     init_vec=init_vec.cpu(),
                     clean_delta=clean_delta,
                     ref_clean_deltas=ref_deltas,
-                    krum_ref_delta=krum_ref_delta,
-                    epochs=attack_epochs,  # you set local_epochs=40 for attacker
-                    lr=0.005,  # you set 0.01 for attacker
+                    krum_ref_delta=None,  # ignored
+                    epochs=attack_epochs,
+                    lr=0.005,
                     label_smoothing=0.0,
                     weight_decay=0.0,
-
-                    #lambda_match_clean=1.0,
-                    #lambda_dir=0.2,
-                    lambda_norm_match=0.2,
-                    lambda_krum_proxy=1.0,
-
-                    krum_k=7,  # if n=10 and f=1 => n-f-2=7, but proxy 3-5 is ok
-                    #min_norm_frac=0.10,
+                    lambda_norm_match=0.15,
+                    lambda_krum_proxy=0.15,
+                    lambda_anchor=0.05,
+                    lambda_centroid=0.0,
+                    krum_k=7,
                 )
 
                 # 4) Krum-safe scaling: keep gamma SMALL

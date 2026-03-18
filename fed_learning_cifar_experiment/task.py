@@ -111,7 +111,7 @@ def train_constrain_and_scale_krum_proxy(
     init_vec,
     clean_delta,
     ref_clean_deltas=None,
-    krum_ref_delta=None,
+    krum_ref_delta=None,  # kept only for API compatibility; intentionally unused
 
     # Optim
     epochs=2,
@@ -123,6 +123,7 @@ def train_constrain_and_scale_krum_proxy(
     lambda_norm_match=0.2,
     lambda_krum_proxy=0.1,
     lambda_centroid=0.0,          # keep VERY small or 0
+    lambda_anchor=0.05,           # NEW: mild pull toward local Krum-like benign anchor
 
     krum_k=7,
     ref_scale=1.0,
@@ -131,17 +132,54 @@ def train_constrain_and_scale_krum_proxy(
     """
     Clean Single-Krum-optimized Constrain-and-Scale attack.
 
-    Design:
+    Threat-model-consistent design:
     - Stage 1: learn strong backdoor
-    - Stage 2: apply minimal stealth (norm + Krum proxy)
+    - Stage 2: apply minimal stealth (norm + Krum proxy + local Krum anchor)
     - Final: one-shot projection
 
+    Important:
+    - Does NOT rely on server revealing Krum-selected client or other clients' updates
+    - Builds a local Krum-style anchor purely from attacker-side reference clean deltas
+
     Goal:
-    Preserve ASR while passing strict Single Krum selection.
+    Preserve attack strength while increasing chance of passing strict Single Krum selection.
     """
+
+    import torch
+    from torch.nn.utils import parameters_to_vector, vector_to_parameters
 
     net = net.to(device)
     net.train()
+
+    # ------------------------------------------------------------
+    # Helper: choose a local Krum-like anchor from refs only
+    # ------------------------------------------------------------
+    def _select_local_krum_anchor(refs_tensor: torch.Tensor, k_neighbors: int) -> torch.Tensor:
+        """
+        refs_tensor: [M, D]
+        Returns a single ref delta [D] that has the lowest local Krum-style proxy
+        among the attacker-side reference clean deltas.
+        """
+        m = refs_tensor.shape[0]
+        if m == 1:
+            return refs_tensor[0]
+
+        # Pairwise squared distances [M, M]
+        diffs = refs_tensor.unsqueeze(1) - refs_tensor.unsqueeze(0)
+        pairwise_dists = torch.sum(diffs * diffs, dim=2)
+
+        # Exclude self by setting diagonal large
+        inf = torch.tensor(float("inf"), device=refs_tensor.device, dtype=pairwise_dists.dtype)
+        pairwise_dists = pairwise_dists + torch.eye(m, device=refs_tensor.device, dtype=pairwise_dists.dtype) * inf
+
+        # Krum-style neighbor count among refs only
+        k_eff = min(max(1, k_neighbors), m - 1)
+
+        knn_vals = torch.topk(pairwise_dists, k=k_eff, largest=False, dim=1).values
+        ref_scores = torch.mean(knn_vals, dim=1)   # mean keeps scale stable
+
+        best_idx = torch.argmin(ref_scores)
+        return refs_tensor[best_idx].detach()
 
     # Global weights
     g = init_vec.detach().to(device)
@@ -172,6 +210,11 @@ def train_constrain_and_scale_krum_proxy(
     clean_delta_dev = clean_delta_cpu.to(device)
     clean_norm = torch.norm(clean_delta_dev) + eps
 
+    # ------------------------------------------------------------
+    # Local Krum-style anchor from attacker-side refs only
+    # ------------------------------------------------------------
+    local_krum_anchor = _select_local_krum_anchor(refs, krum_k)
+
     criterion = torch.nn.CrossEntropyLoss(label_smoothing=label_smoothing).to(device)
 
     # ============================================================
@@ -185,7 +228,7 @@ def train_constrain_and_scale_krum_proxy(
         weight_decay=weight_decay,
     )
 
-    for epoch in range(max(1, epochs - 1)):
+    for _ in range(max(1, epochs - 1)):
         for batch in training_data:
 
             if isinstance(batch, dict):
@@ -193,17 +236,16 @@ def train_constrain_and_scale_krum_proxy(
             else:
                 images, labels = batch
 
-            images = images.to(device)
-            labels = labels.to(device)
+            images = images.to(device, non_blocking=True)
+            labels = labels.to(device, non_blocking=True)
 
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
 
             logits = net(images)
             ce = criterion(logits, labels)
 
             ce.backward()
             torch.nn.utils.clip_grad_norm_(net.parameters(), 5.0)
-
             optimizer.step()
 
     # ============================================================
@@ -217,7 +259,7 @@ def train_constrain_and_scale_krum_proxy(
         weight_decay=weight_decay,
     )
 
-    for epoch in range(1):
+    for _ in range(1):
         for batch in training_data:
 
             if isinstance(batch, dict):
@@ -225,10 +267,10 @@ def train_constrain_and_scale_krum_proxy(
             else:
                 images, labels = batch
 
-            images = images.to(device)
-            labels = labels.to(device)
+            images = images.to(device, non_blocking=True)
+            labels = labels.to(device, non_blocking=True)
 
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
 
             logits = net(images)
             ce = criterion(logits, labels)
@@ -244,15 +286,19 @@ def train_constrain_and_scale_krum_proxy(
             norm_match = (adv_norm - clean_norm) ** 2
 
             # ------------------------------
-            # Krum proxy (CRITICAL: mean)
+            # Krum proxy against attacker-side benign refs
             # ------------------------------
             diff = refs - delta_adv.unsqueeze(0)
             dists = torch.sum(diff * diff, dim=1)
 
-            k = min(krum_k, dists.numel())
+            k = min(max(1, krum_k), dists.numel())
             knn_vals = torch.topk(dists, k=k, largest=False).values
-
             knn_loss = torch.mean(knn_vals)
+
+            # ------------------------------
+            # Local Krum-anchor pull
+            # ------------------------------
+            anchor_loss = torch.mean((delta_adv - local_krum_anchor) ** 2)
 
             # ------------------------------
             # Optional light centroid pull
@@ -264,12 +310,13 @@ def train_constrain_and_scale_krum_proxy(
                 centroid_loss = torch.zeros((), device=device)
 
             # ------------------------------
-            # Final loss (minimal)
+            # Final loss
             # ------------------------------
             loss = (
                 0.3 * ce
                 + lambda_norm_match * norm_match
                 + lambda_krum_proxy * knn_loss
+                + lambda_anchor * anchor_loss
                 + lambda_centroid * centroid_loss
             )
 
@@ -282,7 +329,6 @@ def train_constrain_and_scale_krum_proxy(
     # ============================================================
 
     with torch.no_grad():
-
         w = parameters_to_vector(net.parameters())
         delta_adv = w - g
 
@@ -290,7 +336,6 @@ def train_constrain_and_scale_krum_proxy(
         target_norm = ref_norms.median()
 
         adv_norm = torch.norm(delta_adv) + eps
-
         scale = target_norm / adv_norm
         delta_adv = delta_adv * scale
 
