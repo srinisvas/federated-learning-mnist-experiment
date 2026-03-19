@@ -346,8 +346,8 @@ class FlowerClient(NumPyClient):
                 }
 
         else:
-            sampled_lr = random.choice([0.003, 0.005, 0.007])
-            sampled_epochs = random.choice([3, 5, 7])
+            sampled_lr = random.choice([0.005, 0.007, 0.009])
+            sampled_epochs = random.choice([1, 3, 4])
             train_loss, final_vec = train(
                 self.net,
                 self.training_set,
