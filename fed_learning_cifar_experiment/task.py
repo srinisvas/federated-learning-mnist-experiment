@@ -111,7 +111,7 @@ def train_constrain_and_scale_krum_proxy(
     init_vec,
     clean_delta,
     ref_clean_deltas=None,
-    krum_ref_delta=None,  # kept only for API compatibility; intentionally unused
+    krum_ref_delta=None,  # kept for compatibility; unused
 
     # Optim
     epochs=2,
@@ -119,81 +119,52 @@ def train_constrain_and_scale_krum_proxy(
     label_smoothing=0.0,
     weight_decay=0.0,
 
-    # Stealth weights (tuned for Single Krum)
+    # Stealth weights
     lambda_norm_match=0.2,
     lambda_krum_proxy=0.1,
-    lambda_centroid=0.0,          # keep VERY small or 0
-    lambda_anchor=0.05,           # NEW: mild pull toward local Krum-like benign anchor
+    lambda_centroid=0.0,
+    lambda_anchor=0.05,
+    lambda_temporal=0.0,          # NEW
+
+    prev_malicious_delta=None,    # NEW
 
     krum_k=7,
     ref_scale=1.0,
     eps=1e-12,
 ):
-    """
-    Clean Single-Krum-optimized Constrain-and-Scale attack.
-
-    Threat-model-consistent design:
-    - Stage 1: learn strong backdoor
-    - Stage 2: apply minimal stealth (norm + Krum proxy + local Krum anchor)
-    - Final: one-shot projection
-
-    Important:
-    - Does NOT rely on server revealing Krum-selected client or other clients' updates
-    - Builds a local Krum-style anchor purely from attacker-side reference clean deltas
-
-    Goal:
-    Preserve attack strength while increasing chance of passing strict Single Krum selection.
-    """
-
     import torch
+    import torch.nn.functional as F
     from torch.nn.utils import parameters_to_vector, vector_to_parameters
 
     net = net.to(device)
     net.train()
 
-    # ------------------------------------------------------------
-    # Helper: choose a local Krum-like anchor from refs only
-    # ------------------------------------------------------------
     def _select_local_krum_anchor(refs_tensor: torch.Tensor, k_neighbors: int) -> torch.Tensor:
-        """
-        refs_tensor: [M, D]
-        Returns a single ref delta [D] that has the lowest local Krum-style proxy
-        among the attacker-side reference clean deltas.
-        """
         m = refs_tensor.shape[0]
         if m == 1:
             return refs_tensor[0]
 
-        # Pairwise squared distances [M, M]
         diffs = refs_tensor.unsqueeze(1) - refs_tensor.unsqueeze(0)
         pairwise_dists = torch.sum(diffs * diffs, dim=2)
 
-        # Exclude self by setting diagonal large
-        inf = torch.tensor(float("inf"), device=refs_tensor.device, dtype=pairwise_dists.dtype)
-        pairwise_dists = pairwise_dists + torch.eye(m, device=refs_tensor.device, dtype=pairwise_dists.dtype) * inf
+        eye = torch.eye(m, device=refs_tensor.device, dtype=pairwise_dists.dtype)
+        pairwise_dists = pairwise_dists + eye * 1e30
 
-        # Krum-style neighbor count among refs only
         k_eff = min(max(1, k_neighbors), m - 1)
-
         knn_vals = torch.topk(pairwise_dists, k=k_eff, largest=False, dim=1).values
-        ref_scores = torch.mean(knn_vals, dim=1)   # mean keeps scale stable
+        ref_scores = torch.mean(knn_vals, dim=1)
 
         best_idx = torch.argmin(ref_scores)
         return refs_tensor[best_idx].detach()
 
-    # Global weights
     g = init_vec.detach().to(device)
     vector_to_parameters(g, net.parameters())
 
     init_vec_cpu = init_vec.detach().cpu()
     clean_delta_cpu = clean_delta.detach().cpu()
 
-    # ------------------------------------------------------------
-    # Build reference deltas
-    # ------------------------------------------------------------
     if ref_clean_deltas is None:
         clean_ref_net = tiny_resnet18(num_classes=10, base_width=8)
-
         ref_clean_deltas = build_reference_clean_deltas(
             net=clean_ref_net,
             training_data=training_data,
@@ -210,17 +181,16 @@ def train_constrain_and_scale_krum_proxy(
     clean_delta_dev = clean_delta_cpu.to(device)
     clean_norm = torch.norm(clean_delta_dev) + eps
 
-    # ------------------------------------------------------------
-    # Local Krum-style anchor from attacker-side refs only
-    # ------------------------------------------------------------
     local_krum_anchor = _select_local_krum_anchor(refs, krum_k)
+
+    if prev_malicious_delta is not None:
+        prev_malicious_delta = prev_malicious_delta.detach().to(device)
+    else:
+        prev_malicious_delta = None
 
     criterion = torch.nn.CrossEntropyLoss(label_smoothing=label_smoothing).to(device)
 
-    # ============================================================
-    # STAGE 1 : STRONG BACKDOOR LEARNING
-    # ============================================================
-
+    # Stage 1
     optimizer = torch.optim.SGD(
         net.parameters(),
         lr=lr,
@@ -230,7 +200,6 @@ def train_constrain_and_scale_krum_proxy(
 
     for _ in range(max(1, epochs - 1)):
         for batch in training_data:
-
             if isinstance(batch, dict):
                 images, labels = batch["img"], batch["label"]
             else:
@@ -240,18 +209,13 @@ def train_constrain_and_scale_krum_proxy(
             labels = labels.to(device, non_blocking=True)
 
             optimizer.zero_grad(set_to_none=True)
-
             logits = net(images)
             ce = criterion(logits, labels)
-
             ce.backward()
             torch.nn.utils.clip_grad_norm_(net.parameters(), 5.0)
             optimizer.step()
 
-    # ============================================================
-    # STAGE 2 : MINIMAL KRUM STEALTH
-    # ============================================================
-
+    # Stage 2
     optimizer = torch.optim.SGD(
         net.parameters(),
         lr=lr * 0.5,
@@ -261,7 +225,6 @@ def train_constrain_and_scale_krum_proxy(
 
     for _ in range(1):
         for batch in training_data:
-
             if isinstance(batch, dict):
                 images, labels = batch["img"], batch["label"]
             else:
@@ -277,67 +240,68 @@ def train_constrain_and_scale_krum_proxy(
 
             w = parameters_to_vector(net.parameters())
             delta_adv = w - g
-
             adv_norm = torch.norm(delta_adv) + eps
 
-            # ------------------------------
             # Norm match
-            # ------------------------------
             norm_match = (adv_norm - clean_norm) ** 2
 
-            # ------------------------------
-            # Krum proxy against attacker-side benign refs
-            # ------------------------------
+            # Krum proxy
             diff = refs - delta_adv.unsqueeze(0)
             dists = torch.sum(diff * diff, dim=1)
 
             k = min(max(1, krum_k), dists.numel())
             knn_vals = torch.topk(dists, k=k, largest=False).values
+
+            # Sharper local density matching
             knn_loss = torch.mean(knn_vals[: max(1, k // 2)])
 
-            # ------------------------------
-            # Local Krum-anchor pull
-            # ------------------------------
+            # Local anchor
             anchor_loss = torch.mean((delta_adv - local_krum_anchor) ** 2)
 
-            # ------------------------------
-            # Optional light centroid pull
-            # ------------------------------
+            # Optional centroid
             if lambda_centroid > 0:
                 ref_mean = refs.median(dim=0).values
                 centroid_loss = torch.mean((delta_adv - ref_mean) ** 2)
             else:
                 centroid_loss = torch.zeros((), device=device)
 
-            # ------------------------------
-            # Final loss
-            # ------------------------------
+            # Temporal malicious cohesion
+            if prev_malicious_delta is not None and torch.norm(prev_malicious_delta) > 1e-12:
+                cos_sim = F.cosine_similarity(
+                    delta_adv.unsqueeze(0),
+                    prev_malicious_delta.unsqueeze(0),
+                    dim=1,
+                    eps=eps,
+                )[0]
+                temporal_loss = 1.0 - cos_sim
+            else:
+                temporal_loss = torch.zeros((), device=device)
+
             loss = (
                 0.3 * ce
                 + lambda_norm_match * norm_match
                 + lambda_krum_proxy * knn_loss
                 + lambda_anchor * anchor_loss
                 + lambda_centroid * centroid_loss
+                + lambda_temporal * temporal_loss
             )
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(net.parameters(), 5.0)
             optimizer.step()
 
-    # ============================================================
-    # FINAL PROJECTION (ONCE ONLY)
-    # ============================================================
-
+    # Final projection ONCE ONLY
     with torch.no_grad():
         w = parameters_to_vector(net.parameters())
         delta_adv = w - g
 
         ref_norms = torch.norm(refs, dim=1)
-        target_norm = ref_norms.median()
+
+        # Lower quantile is more Krum-friendly than median
+        target_norm = torch.quantile(ref_norms, 0.2).detach()
 
         adv_norm = torch.norm(delta_adv) + eps
-        scale = target_norm / adv_norm
-        delta_adv = delta_adv * scale
+        delta_adv = delta_adv * (target_norm / adv_norm)
 
         vector_to_parameters(g + delta_adv, net.parameters())
 

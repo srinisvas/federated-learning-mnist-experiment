@@ -38,6 +38,8 @@ class FlowerClient(NumPyClient):
                 "vec": [],
                 "alpha": 0.9,
             })
+        if "prev_malicious_delta" not in self.client_state.config_records:
+            self.client_state.config_records["prev_malicious_delta"] = ConfigRecord({"vec": []})
 
     def get_properties(self, config):
         return {"partition_id": str(self.context.node_config["partition-id"])}
@@ -226,6 +228,12 @@ class FlowerClient(NumPyClient):
                     label_smoothing=0.05,
                 )
 
+                prev_malicious_delta = None
+                if "prev_malicious_delta" in self.client_state.config_records:
+                    prev_list = self.client_state.config_records["prev_malicious_delta"].get("vec", [])
+                    if len(prev_list) > 0:
+                        prev_malicious_delta = torch.tensor(prev_list, dtype=torch.float32)
+
                 # 3) Run constrained backdoor training using the BACKDOOR loader
 
                 final_vec = train_constrain_and_scale_krum_proxy(
@@ -235,7 +243,7 @@ class FlowerClient(NumPyClient):
                     init_vec=init_vec.cpu(),
                     clean_delta=clean_delta,
                     ref_clean_deltas=ref_deltas,
-                    krum_ref_delta=None,  # ignored
+                    krum_ref_delta=None,
                     epochs=attack_epochs,
                     lr=0.005,
                     label_smoothing=0.0,
@@ -244,106 +252,20 @@ class FlowerClient(NumPyClient):
                     lambda_krum_proxy=0.15,
                     lambda_anchor=0.02,
                     lambda_centroid=0.0,
+                    lambda_temporal=0.10,
+                    prev_malicious_delta=prev_malicious_delta,
                     krum_k=7,
                 )
 
-                # 4) Krum-safe scaling: keep gamma SMALL
-                # Base it on clean_delta norm, NOT prev_global step.
+                curr_mal_delta = (final_vec - init_vec.cpu()).detach().cpu()
+                self.client_state.config_records["prev_malicious_delta"] = ConfigRecord({
+                    "vec": curr_mal_delta.tolist()
+                })
+
                 attack_step = torch.norm(final_vec - init_vec.cpu()).item()
                 clean_step = torch.norm(clean_delta).item()
 
-                """
-                gamma_cap = 2.0  # Krum safe cap, start conservative
-                if clean_step > 1e-8 and attack_step > 1e-12:
-                    gamma = min(gamma_cap, clean_step / attack_step)
-                    gamma = max(1.0, gamma)
-                else:
-                    gamma = 1.0
-                
-                delta_adv = final_vec - init_vec.cpu()
-                dist_to_clean = torch.norm(delta_adv - clean_delta).item()
-                print(f"[Client {partition_id}][Round {current_round}] "
-                      f"||Δ_adv||={delta_adv.norm().item():.4f} "
-                      f"||Δ_clean||={clean_delta.norm().item():.4f} "
-                      f"||Δ_adv-Δ_clean||={dist_to_clean:.4f} gamma={gamma:.2f}")
-                dists = [torch.norm(delta_adv - d).item() for d in ref_deltas]
-                dists.sort()
-                print(f"[Client {partition_id}] Krum-proxy distances (7 smallest): {dists[:7]}")
-
-                scaled_vec = krum_safe_scale(
-                    final_vec=final_vec,
-                    init_vec=init_vec.cpu(),
-                    gamma=gamma,
-                    keep_delta_norm=False,
-                )
-                """
-
-                """
                 vector_to_parameters(final_vec.to(self.device), self.net.parameters())
-                self.prev_global_vec = init_vec.clone()
-
-                return get_weights(self.net), len(backdoor_training_set.dataset), {
-                    "attack": "constrain-and-scale-krum-proxy",
-                    "clean_step": clean_step,
-                    "attack_step": attack_step,
-                }
-                """
-                """New Constrain and Scale with Reference-Based Targeting
-                delta_adv = final_vec - init_vec.cpu()
-
-                # normalize direction
-                delta_dir = delta_adv / (torch.norm(delta_adv) + 1e-12)
-
-                # convert refs list -> tensor
-                refs_tensor = torch.stack(ref_deltas)
-
-                # compute benign update magnitude
-                ref_norms = torch.norm(refs_tensor, dim=1)
-                target_norm = ref_norms.median().detach()
-
-                refs_tensor = torch.stack(ref_deltas)
-                ref_norms = torch.norm(refs_tensor, dim=1)
-                target_norm = ref_norms.median().detach()
-
-                target_norm = 0.992 * target_norm
-
-                #New target Norm
-                #target_norm = torch.norm(clean_delta)
-
-                # enforce deterministic malicious update
-                delta_adv = delta_dir * target_norm
-                #delta_adv = delta_adv * 0.98
-                """
-                delta_adv = final_vec - init_vec.cpu()
-
-                refs_tensor = torch.stack(ref_deltas)
-
-                dists = torch.norm(refs_tensor - clean_delta.unsqueeze(0), dim=1)
-                closest_idx = torch.argmin(dists)
-                anchor_ref = refs_tensor[closest_idx]
-
-
-                #target_norm = 0.995 * torch.norm(anchor_ref).detach()
-                #delta_adv = 0.85 * delta_adv + 0.15 * anchor_ref
-
-                #delta_dir = delta_adv / (torch.norm(delta_adv) + 1e-12)
-                #delta_adv = delta_dir * target_norm
-
-                ref_norms = torch.norm(refs_tensor, dim=1)
-
-                # lower quantile (more Krum-like than median)
-                target_norm = torch.quantile(ref_norms, 0.3).detach()
-
-                adv_norm = torch.norm(delta_adv) + 1e-12
-                scale = target_norm / adv_norm
-
-                delta_adv = delta_adv * scale
-
-                # reconstruct malicious weights
-                final_vec = init_vec.cpu() + delta_adv
-
-                vector_to_parameters(final_vec.to(self.device), self.net.parameters())
-
                 self.prev_global_vec = init_vec.clone()
 
                 return get_weights(self.net), len(backdoor_training_set.dataset), {
