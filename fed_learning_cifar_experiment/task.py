@@ -327,7 +327,7 @@ def load_data(partition_id: int, num_partitions: int, alpha_val: float, backdoor
             dirichlet_cache = dirichlet_indices(
                 labels=labels,
                 num_partitions=num_partitions,
-                alpha=0.1,
+                alpha=0.5,
                 seed=42,
             )
 
