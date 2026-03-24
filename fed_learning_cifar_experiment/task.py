@@ -111,22 +111,22 @@ def train_constrain_and_scale_krum_proxy(
     init_vec,
     clean_delta,
     ref_clean_deltas=None,
-    krum_ref_delta=None,  # kept for compatibility; unused
+    krum_ref_delta=None,
 
     # Optim
-    epochs=2,
+    epochs=3,                     # 🔥 reduced
     lr=0.01,
     label_smoothing=0.0,
     weight_decay=0.0,
 
     # Stealth weights
-    lambda_norm_match=0.2,
-    lambda_krum_proxy=0.1,
+    lambda_norm_match=0.1,
+    lambda_krum_proxy=0.25,       # 🔥 slightly stronger geometry
     lambda_centroid=0.0,
     lambda_anchor=0.05,
-    lambda_temporal=0.0,          # NEW
+    lambda_temporal=0.0,          # 🔥 removed
 
-    prev_malicious_delta=None,    # NEW
+    prev_malicious_delta=None,
 
     krum_k=7,
     ref_scale=1.0,
@@ -139,50 +139,15 @@ def train_constrain_and_scale_krum_proxy(
     net = net.to(device)
     net.train()
 
-    def _select_local_krum_anchor(refs_tensor: torch.Tensor, k_neighbors: int) -> torch.Tensor:
-        m = refs_tensor.shape[0]
-        if m == 1:
-            return refs_tensor[0]
-
-        diffs = refs_tensor.unsqueeze(1) - refs_tensor.unsqueeze(0)
-        pairwise_dists = torch.sum(diffs * diffs, dim=2)
-
-        eye = torch.eye(m, device=refs_tensor.device, dtype=pairwise_dists.dtype)
-        pairwise_dists = pairwise_dists + eye * 1e30
-
-        k_eff = min(max(1, k_neighbors), m - 1)
-        knn_vals = torch.topk(pairwise_dists, k=k_eff, largest=False, dim=1).values
-        ref_scores = torch.mean(knn_vals, dim=1)
-
-        best_idx = torch.argmin(ref_scores)
-        return refs_tensor[best_idx].detach()
-
     g = init_vec.detach().to(device)
     vector_to_parameters(g, net.parameters())
 
-    init_vec_cpu = init_vec.detach().cpu()
-    clean_delta_cpu = clean_delta.detach().cpu()
+    refs = torch.stack(ref_clean_deltas, dim=0).to(device)
 
-    if ref_clean_deltas is None:
-        clean_ref_net = tiny_resnet18(num_classes=10, base_width=8)
-        ref_clean_deltas = build_reference_clean_deltas(
-            net=clean_ref_net,
-            training_data=training_data,
-            device=device,
-            init_vec=init_vec_cpu,
-            epochs=1,
-            lr=max(lr, 0.005),
-            num_refs=max(krum_k + 1, 5),
-            label_smoothing=0.05,
-        )
-
-    refs = torch.stack([d * ref_scale for d in ref_clean_deltas], dim=0).to(device)
-
-    clean_delta_dev = clean_delta_cpu.to(device)
+    clean_delta_dev = clean_delta.to(device)
     clean_norm = torch.norm(clean_delta_dev) + eps
 
-    #local_krum_anchor = _select_local_krum_anchor(refs, krum_k)
-
+    # 🔥 SHARED DENSE ANCHOR (your improved version)
     diffs = refs.unsqueeze(1) - refs.unsqueeze(0)
     pairwise = torch.sum(diffs * diffs, dim=2)
 
@@ -191,57 +156,37 @@ def train_constrain_and_scale_krum_proxy(
     scores = torch.mean(knn, dim=1)
 
     top_ids = torch.topk(-scores, k=min(3, len(scores))).indices
-    local_krum_anchor = torch.mean(refs[top_ids], dim=0).detach()
-
-    if prev_malicious_delta is not None:
-        prev_malicious_delta = prev_malicious_delta.detach().to(device)
-    else:
-        prev_malicious_delta = None
+    anchor = torch.mean(refs[top_ids], dim=0).detach()
 
     criterion = torch.nn.CrossEntropyLoss(label_smoothing=label_smoothing).to(device)
 
-    # Stage 1
-    optimizer = torch.optim.SGD(
-        net.parameters(),
-        lr=lr,
-        momentum=0.9,
-        weight_decay=weight_decay,
-    )
+    # -------------------------
+    # Stage 1: Backdoor ONLY
+    # -------------------------
+    optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.9)
 
-    for _ in range(max(1, epochs - 1)):
+    for _ in range(1):   # 🔥 only 1 epoch
         for batch in training_data:
-            if isinstance(batch, dict):
-                images, labels = batch["img"], batch["label"]
-            else:
-                images, labels = batch
-
-            images = images.to(device, non_blocking=True)
-            labels = labels.to(device, non_blocking=True)
+            images, labels = batch if not isinstance(batch, dict) else (batch["img"], batch["label"])
+            images, labels = images.to(device), labels.to(device)
 
             optimizer.zero_grad(set_to_none=True)
             logits = net(images)
-            ce = criterion(logits, labels)
-            ce.backward()
+            loss = criterion(logits, labels)
+            loss.backward()
             torch.nn.utils.clip_grad_norm_(net.parameters(), 5.0)
             optimizer.step()
 
-    # Stage 2
-    optimizer = torch.optim.SGD(
-        net.parameters(),
-        lr=lr * 0.5,
-        momentum=0.9,
-        weight_decay=weight_decay,
-    )
+    # -------------------------
+    # Stage 2: Geometry shaping (short)
+    # -------------------------
+    optimizer = torch.optim.SGD(net.parameters(), lr=lr * 0.5, momentum=0.9)
 
     for _ in range(1):
-        for batch in training_data:
-            if isinstance(batch, dict):
-                images, labels = batch["img"], batch["label"]
-            else:
-                images, labels = batch
+        for i, batch in enumerate(training_data):
 
-            images = images.to(device, non_blocking=True)
-            labels = labels.to(device, non_blocking=True)
+            images, labels = batch if not isinstance(batch, dict) else (batch["img"], batch["label"])
+            images, labels = images.to(device), labels.to(device)
 
             optimizer.zero_grad(set_to_none=True)
 
@@ -252,69 +197,44 @@ def train_constrain_and_scale_krum_proxy(
             delta_adv = w - g
             adv_norm = torch.norm(delta_adv) + eps
 
-            # Norm match
+            # Norm
             norm_match = (adv_norm - clean_norm) ** 2
 
-            # Krum proxy
+            # 🔥 Krum proxy (lighter)
             diff = refs - delta_adv.unsqueeze(0)
             dists = torch.sum(diff * diff, dim=1)
-
-            k = min(max(1, krum_k), dists.numel())
+            k = min(krum_k, dists.numel())
             knn_vals = torch.topk(dists, k=k, largest=False).values
+            knn_loss = torch.mean(knn_vals[: max(1, k // 2)])
 
-            # Sharper local density matching
-            topk = knn_vals[: max(1, k // 2)]
-            knn_loss = torch.mean(topk ** 2)
-
-            # Local anchor
-            anchor_loss = torch.mean((delta_adv - local_krum_anchor) ** 2)
-
-            # Optional centroid
-            if lambda_centroid > 0:
-                ref_mean = refs.median(dim=0).values
-                centroid_loss = torch.mean((delta_adv - ref_mean) ** 2)
-            else:
-                centroid_loss = torch.zeros((), device=device)
-
-            # Temporal malicious cohesion
-            if prev_malicious_delta is not None and torch.norm(prev_malicious_delta) > 1e-12:
-                cos_sim = F.cosine_similarity(
-                    delta_adv.unsqueeze(0),
-                    prev_malicious_delta.unsqueeze(0),
-                    dim=1,
-                    eps=eps,
-                )[0]
-                temporal_loss = 1.0 - cos_sim
-            else:
-                temporal_loss = torch.zeros((), device=device)
+            # Anchor
+            anchor_loss = torch.mean((delta_adv - anchor) ** 2)
 
             loss = (
-                0.3 * ce
+                0.4 * ce
                 + lambda_norm_match * norm_match
                 + lambda_krum_proxy * knn_loss
                 + lambda_anchor * anchor_loss
-                + lambda_centroid * centroid_loss
-                + lambda_temporal * temporal_loss
             )
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(net.parameters(), 5.0)
             optimizer.step()
 
-    # Final projection ONCE ONLY
+    # -------------------------
+    # Final Projection (CRITICAL)
+    # -------------------------
     with torch.no_grad():
         w = parameters_to_vector(net.parameters())
         delta_adv = w - g
 
         ref_norms = torch.norm(refs, dim=1)
 
-        # Lower quantile is more Krum-friendly than median
-        target_norm = torch.quantile(ref_norms, 0.2).detach()
+        target_norm = torch.quantile(ref_norms, 0.2)
+        delta_adv = delta_adv * (target_norm / (torch.norm(delta_adv) + eps))
 
-        adv_norm = torch.norm(delta_adv) + eps
-        delta_adv = delta_adv * (target_norm / adv_norm)
-
-        delta_adv = delta_adv * 0.995
+        # 🔥 NEW: direct anchor projection (cheap + powerful)
+        delta_adv = 0.7 * delta_adv + 0.3 * anchor
 
         vector_to_parameters(g + delta_adv, net.parameters())
 
