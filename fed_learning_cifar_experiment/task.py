@@ -155,8 +155,12 @@ def train_constrain_and_scale_krum_proxy(
     knn = torch.topk(pairwise, k=k_eff, largest=False).values
     scores = torch.mean(knn, dim=1)
 
-    top_ids = torch.topk(-scores, k=min(3, len(scores))).indices
-    anchor = torch.mean(refs[top_ids], dim=0).detach()
+    best_id = torch.argmin(scores)
+    anchor = refs[best_id].detach()
+
+    top2 = torch.topk(-scores, k=min(2, len(scores))).indices
+    if len(top2) >= 2:
+        anchor = (0.85 * refs[top2[0]] + 0.15 * refs[top2[1]]).detach()
 
     criterion = torch.nn.CrossEntropyLoss(label_smoothing=label_smoothing).to(device)
 
