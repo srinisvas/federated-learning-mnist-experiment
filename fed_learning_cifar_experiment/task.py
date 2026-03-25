@@ -114,17 +114,17 @@ def train_constrain_and_scale_krum_proxy(
     krum_ref_delta=None,
 
     # Optim
-    epochs=3,                     # 🔥 reduced
+    epochs=3,                     # reduced
     lr=0.01,
     label_smoothing=0.0,
     weight_decay=0.0,
 
     # Stealth weights
     lambda_norm_match=0.1,
-    lambda_krum_proxy=0.25,       # 🔥 slightly stronger geometry
+    lambda_krum_proxy=0.25,       # slightly stronger geometry
     lambda_centroid=0.0,
     lambda_anchor=0.05,
-    lambda_temporal=0.0,          # 🔥 removed
+    lambda_temporal=0.0,          #  removed
 
     prev_malicious_delta=None,
 
@@ -147,7 +147,7 @@ def train_constrain_and_scale_krum_proxy(
     clean_delta_dev = clean_delta.to(device)
     clean_norm = torch.norm(clean_delta_dev) + eps
 
-    # 🔥 SHARED DENSE ANCHOR (your improved version)
+    # SHARED DENSE ANCHOR (your improved version)
     diffs = refs.unsqueeze(1) - refs.unsqueeze(0)
     pairwise = torch.sum(diffs * diffs, dim=2)
 
@@ -165,7 +165,7 @@ def train_constrain_and_scale_krum_proxy(
     # -------------------------
     optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.9)
 
-    for _ in range(1):   # 🔥 only 1 epoch
+    for _ in range(1):   #only 1 epoch
         for batch in training_data:
             images, labels = batch if not isinstance(batch, dict) else (batch["img"], batch["label"])
             images, labels = images.to(device), labels.to(device)
@@ -200,7 +200,7 @@ def train_constrain_and_scale_krum_proxy(
             # Norm
             norm_match = (adv_norm - clean_norm) ** 2
 
-            # 🔥 Krum proxy (lighter)
+            #Krum proxy (lighter)
             diff = refs - delta_adv.unsqueeze(0)
             dists = torch.sum(diff * diff, dim=1)
             k = min(krum_k, dists.numel())
@@ -233,7 +233,7 @@ def train_constrain_and_scale_krum_proxy(
         target_norm = torch.quantile(ref_norms, 0.2)
         delta_adv = delta_adv * (target_norm / (torch.norm(delta_adv) + eps))
 
-        # 🔥 NEW: direct anchor projection (cheap + powerful)
+        # direct anchor projection (cheap + powerful)
         delta_adv = 0.7 * delta_adv + 0.3 * anchor
 
         vector_to_parameters(g + delta_adv, net.parameters())

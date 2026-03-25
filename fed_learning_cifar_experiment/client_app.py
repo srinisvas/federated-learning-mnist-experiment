@@ -224,7 +224,7 @@ class FlowerClient(NumPyClient):
                     init_vec=init_vec.cpu(),
                     epochs=benign_epochs,
                     lr=0.005,
-                    num_refs=24,
+                    num_refs=8,
                     seed_base=shared_seed,
                     label_smoothing=0.05,
                 )
@@ -245,8 +245,8 @@ class FlowerClient(NumPyClient):
                     clean_delta=clean_delta,
                     ref_clean_deltas=ref_deltas,
                     krum_ref_delta=None,
-                    epochs=3,
-                    lr=0.003,
+                    epochs=5,
+                    lr=0.005,
                     label_smoothing=0.0,
                     weight_decay=0.0,
                     lambda_norm_match=0.10,
@@ -277,8 +277,7 @@ class FlowerClient(NumPyClient):
 
         else:
             sampled_lr = random.choice([0.003, 0.004, 0.005])
-            sampled_lr = random.choice([0.0025, 0.003, 0.004, 0.005])
-            sampled_epochs = random.choice([1, 2, 3, 4])
+            sampled_epochs = random.choice([1, 2, 3])
             train_loss, final_vec = train(
                 self.net,
                 self.training_set,
