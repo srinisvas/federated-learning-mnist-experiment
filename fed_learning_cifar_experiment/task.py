@@ -226,19 +226,32 @@ def train_constrain_and_scale_krum_proxy(
             optimizer.step()
 
     # -------------------------
-    # Final Projection (CRITICAL)
+    # Final Projection
     # -------------------------
+
     with torch.no_grad():
         w = parameters_to_vector(net.parameters())
         delta_adv = w - g
 
         ref_norms = torch.norm(refs, dim=1)
+        norm_lo = torch.quantile(ref_norms, 0.20)
+        norm_hi = torch.quantile(ref_norms, 0.50)
 
-        target_norm = torch.quantile(ref_norms, 0.2)
-        delta_adv = delta_adv * (target_norm / (torch.norm(delta_adv) + eps))
+        adv_norm = torch.norm(delta_adv) + eps
+        target_norm = torch.clamp(adv_norm, min=norm_lo, max=norm_hi)
+        delta_adv = delta_adv * (target_norm / adv_norm)
 
-        # direct anchor projection (cheap + powerful)
-        delta_adv = 0.7 * delta_adv + 0.3 * anchor
+        # cap distance to anchor relative to benign spread
+        ref_to_anchor = torch.norm(refs - anchor.unsqueeze(0), dim=1)
+        max_anchor_dist = torch.quantile(ref_to_anchor, 0.50)
+
+        delta_to_anchor = delta_adv - anchor
+        dist_anchor = torch.norm(delta_to_anchor) + eps
+        if dist_anchor > max_anchor_dist:
+            delta_adv = anchor + delta_to_anchor * (max_anchor_dist / dist_anchor)
+
+        # small final pull only
+        delta_adv = 0.9 * delta_adv + 0.1 * anchor
 
         vector_to_parameters(g + delta_adv, net.parameters())
 
