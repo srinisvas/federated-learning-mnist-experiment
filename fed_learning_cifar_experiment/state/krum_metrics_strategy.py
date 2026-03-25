@@ -17,6 +17,13 @@ from fed_learning_cifar_experiment.utils.logger import (
     write_experiment_summary,
 )
 
+from flwr.common import parameters_to_ndarrays
+from fed_learning_cifar_experiment.task import (
+    get_resnet_cnn_model, set_weights, load_data, train
+)
+import torch
+from torch.nn.utils import parameters_to_vector
+
 
 class SaveKrumMetricsStrategy(fl.server.strategy.Krum):
     """
@@ -178,6 +185,58 @@ class SaveKrumMetricsStrategy(fl.server.strategy.Krum):
 
         sampled_ids = [c.cid for c in sampled_clients]
 
+        benign_clients = [
+            c for c in sampled_clients if c.cid not in malicious_ids
+        ]
+
+        ref_clients = benign_clients[:6]
+
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+        nds = parameters_to_ndarrays(parameters)
+
+        model_tmp = get_resnet_cnn_model()
+        set_weights(model_tmp, nds)
+        model_tmp.to(device)
+
+        init_vec = parameters_to_vector(model_tmp.parameters()).detach().cpu()
+
+        ref_deltas = []
+
+        for client in ref_clients:
+            pid = self._get_partition_id(client)
+
+            train_loader, _ = load_data(
+                partition_id=pid,
+                num_partitions=self.num_clients,
+                alpha_val=0.9,
+                backdoor_enabled=False,
+            )
+
+            net_ref = get_resnet_cnn_model()
+            set_weights(net_ref, nds)
+            net_ref.to(device)
+
+            lr = random.choice([0.003, 0.004, 0.005])
+            epochs = random.choice([1, 2])
+
+            _, vec = train(
+                net_ref,
+                train_loader,
+                epochs,
+                device,
+                lr,
+            )
+
+            delta = (vec - init_vec).cpu().numpy()
+            ref_deltas.append(delta)
+
+        ref_deltas = np.stack(ref_deltas)
+
+        centroid = np.mean(ref_deltas, axis=0)
+        norms = np.linalg.norm(ref_deltas, axis=1)
+        median_norm = float(np.median(norms))
+
         fit_ins_list: List[Tuple[ClientProxy, FitIns]] = []
         print("Sampled clients for round {}: {}".format(server_round, sampled_ids))
         print("Malicious clients for round {}: {}".format(server_round, malicious_ids))
@@ -189,6 +248,9 @@ class SaveKrumMetricsStrategy(fl.server.strategy.Krum):
                     "sampled_client_ids": json.dumps(sampled_ids),
                     "malicious_client_ids": json.dumps(malicious_ids),
                     "is_malicious": str(client.cid in malicious_ids),
+                    "shared_ref_deltas": json.dumps(ref_deltas.tolist()),
+                    "shared_ref_median_norm": median_norm,
+
                 }
             )
 

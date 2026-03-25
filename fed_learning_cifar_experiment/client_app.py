@@ -210,24 +210,23 @@ class FlowerClient(NumPyClient):
                     device=self.device,
                     lr=0.005  # benign-like LR (match your honest clients)
                 )
+
+                shared_ref_deltas = None
+                shared_median_norm = None
+
+                if "shared_ref_deltas" in config:
+                    shared_ref_deltas = torch.tensor(
+                        json.loads(config["shared_ref_deltas"]),
+                        dtype=torch.float32,
+                    )
+
+                    shared_median_norm = float(config["shared_ref_median_norm"])
+
+                target_norm = None
+                if shared_median_norm is not None:
+                    target_norm = shared_median_norm * random.uniform(0.98, 1.02)
+
                 clean_delta = (clean_vec - init_vec.cpu()).detach().cpu()
-
-                # 2) Build local "peer" reference clean deltas (bootstrapped)
-                # Keep small for speed. Need at least krum_k+1.
-
-                shared_seed = int(config.get("current-round", 0)) * 1000
-
-                ref_deltas = build_reference_clean_deltas(
-                    net=net_ref,  # base architecture (untrained clone is fine)
-                    training_data=clean_training_set,
-                    device=self.device,
-                    init_vec=init_vec.cpu(),
-                    epochs=benign_epochs,
-                    lr=0.005,
-                    num_refs=8,
-                    seed_base=shared_seed,
-                    label_smoothing=0.05,
-                )
 
                 prev_malicious_delta = None
                 if "prev_malicious_delta" in self.client_state.config_records:
@@ -243,7 +242,7 @@ class FlowerClient(NumPyClient):
                     device=self.device,
                     init_vec=init_vec.cpu(),
                     clean_delta=clean_delta,
-                    ref_clean_deltas=ref_deltas,
+                    ref_clean_deltas=shared_ref_deltas,
                     krum_ref_delta=None,
                     epochs=5,
                     lr=0.005,
