@@ -228,22 +228,35 @@ def train_constrain_and_scale_krum_proxy(
             torch.nn.utils.clip_grad_norm_(net.parameters(), 5.0)
             optimizer.step()
 
-    # -------------------------
-    # Final Projection (CRITICAL)
-    # -------------------------
-    with torch.no_grad():
-        w = parameters_to_vector(net.parameters())
-        delta_adv = w - g
+        # -------------------------
+        # Final Projection (New Version for cold starts)
+        # -------------------------
+        with torch.no_grad():
+            w = parameters_to_vector(net.parameters())
+            delta_adv = w - g
 
-        ref_norms = torch.norm(refs, dim=1)
+            ref_norms = torch.norm(refs, dim=1)
+            ref_centroid = torch.mean(refs, dim=0)
 
-        target_norm = torch.quantile(ref_norms, 0.2)
-        delta_adv = delta_adv * (target_norm / (torch.norm(delta_adv) + eps))
+            # Norm: match median of ref norms, floored at 0.5 * clean_norm
+            # to prevent magnitude collapse in early rounds
+            ref_median_norm = torch.median(ref_norms)
+            target_norm = torch.max(ref_median_norm, 0.5 * clean_norm)
+            delta_adv = delta_adv * (target_norm / (torch.norm(delta_adv) + eps))
 
-        # direct anchor projection (cheap + powerful)
-        delta_adv = 0.7 * delta_adv + 0.3 * anchor
+            # Centroid pull: reposition delta_adv within the benign cluster
+            # rather than blending with anchor which may be off-centroid
+            dist_to_centroid = torch.norm(delta_adv - ref_centroid)
+            ref_spread = torch.std(
+                torch.norm(refs - ref_centroid.unsqueeze(0), dim=1)
+            ) + eps
 
-        vector_to_parameters(g + delta_adv, net.parameters())
+            if dist_to_centroid > ref_spread:
+                pull = (dist_to_centroid - ref_spread) / (dist_to_centroid + eps)
+                pull = torch.clamp(pull, 0.0, 0.8)  # never fully collapse to centroid
+                delta_adv = (1.0 - pull) * delta_adv + pull * ref_centroid
+
+            vector_to_parameters(g + delta_adv, net.parameters())
 
     return parameters_to_vector(net.parameters()).detach().cpu().clone()
 
