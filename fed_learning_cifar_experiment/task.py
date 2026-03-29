@@ -229,8 +229,9 @@ def train_constrain_and_scale_krum_proxy(
             optimizer.step()
 
         # -------------------------
-        # Final Projection (New Version for cold starts)
+        # Final Projection (Version V2 for cold starts)
         # -------------------------
+
         with torch.no_grad():
             w = parameters_to_vector(net.parameters())
             delta_adv = w - g
@@ -238,23 +239,29 @@ def train_constrain_and_scale_krum_proxy(
             ref_norms = torch.norm(refs, dim=1)
             ref_centroid = torch.mean(refs, dim=0)
 
-            # Norm: match median of ref norms, floored at 0.5 * clean_norm
-            # to prevent magnitude collapse in early rounds
-            ref_median_norm = torch.median(ref_norms)
-            target_norm = torch.max(ref_median_norm, 0.5 * clean_norm)
-            delta_adv = delta_adv * (target_norm / (torch.norm(delta_adv) + eps))
+            # Find the tightest cluster in ref space (lowest variance neighborhood)
+            diffs = refs.unsqueeze(1) - refs.unsqueeze(0)
+            pairwise = torch.sum(diffs * diffs, dim=2)
+            k_eff = min(krum_k, refs.shape[0] - 1)
+            knn_scores = torch.topk(pairwise, k=k_eff, largest=False).values.mean(dim=1)
+            best_ref = refs[torch.argmin(knn_scores)]  # Krum-optimal ref delta
 
-            # Centroid pull: reposition delta_adv within the benign cluster
-            # rather than blending with anchor which may be off-centroid
-            dist_to_centroid = torch.norm(delta_adv - ref_centroid)
+            # Pull toward Krum-optimal ref rather than plain centroid
+            dist_to_best = torch.norm(delta_adv - best_ref)
             ref_spread = torch.std(
                 torch.norm(refs - ref_centroid.unsqueeze(0), dim=1)
             ) + eps
 
-            if dist_to_centroid > ref_spread:
-                pull = (dist_to_centroid - ref_spread) / (dist_to_centroid + eps)
-                pull = torch.clamp(pull, 0.0, 0.8)  # never fully collapse to centroid
-                delta_adv = (1.0 - pull) * delta_adv + pull * ref_centroid
+            if dist_to_best > ref_spread:
+                pull = (dist_to_best - ref_spread) / (dist_to_best + eps)
+                pull = torch.clamp(pull, 0.0, 0.75)
+                delta_adv = (1.0 - pull) * delta_adv + pull * best_ref
+
+            # Norm: stay within benign range with floor
+            ref_median_norm = torch.median(ref_norms)
+            target_norm = torch.max(ref_median_norm, 0.5 * clean_norm)
+            current_norm = torch.norm(delta_adv) + eps
+            delta_adv = delta_adv * (target_norm / current_norm)
 
             vector_to_parameters(g + delta_adv, net.parameters())
 
