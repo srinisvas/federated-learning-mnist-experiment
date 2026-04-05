@@ -97,6 +97,7 @@ class SaveKrumMetricsStrategy(fl.server.strategy.Krum):
         self.prev_global_parameters: Optional[Parameters] = None
         self.last_krum_selected_cid: Optional[str] = None
         self.last_krum_selected_delta: Optional[np.ndarray] = None
+        self._last_round_malicious_ids: List[str] = []
 
     def _get_partition_id(self, client: ClientProxy) -> int:
         if client.cid in self._cid_to_partition:
@@ -230,6 +231,10 @@ class SaveKrumMetricsStrategy(fl.server.strategy.Krum):
         centroid = np.mean(ref_deltas, axis=0)
         norms = np.linalg.norm(ref_deltas, axis=1)
         median_norm = float(np.median(norms))
+
+        self._last_round_malicious_ids = list(map(str, malicious_ids))
+
+        fit_ins_list: List[Tuple[ClientProxy, FitIns]] = []
 
         fit_ins_list: List[Tuple[ClientProxy, FitIns]] = []
         print("Sampled clients for round {}: {}".format(server_round, sampled_ids))
@@ -466,6 +471,11 @@ class SaveKrumMetricsStrategy(fl.server.strategy.Krum):
         print(
             f"[Round {rnd}][Krum Selected] "
             f"CID={selected_cid}, Partition={selected_partition}\n"
+        )
+
+        is_attacker_selected = str(selected_cid) in set(self._last_round_malicious_ids)
+        print(
+            f"[Round {rnd}][Krum] Attacker selected={is_attacker_selected}\n"
         )
 
         # ---- Maintain your existing behavior ----
