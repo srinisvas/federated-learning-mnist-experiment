@@ -104,7 +104,7 @@ def krum_score_proxy(delta, ref_deltas, k):
     dists = torch.sum(diffs * diffs, dim=1)
     return torch.topk(dists, k=min(k, len(dists)), largest=False).values.mean()
 
-def train_constrain_and_scale_krum_proxy_no_two_stage(
+def train_constrain_and_scale_krum_proxy(
     net,
     training_data,
     device,
@@ -131,7 +131,6 @@ def train_constrain_and_scale_krum_proxy_no_two_stage(
     eps=1e-12,
 ):
     import torch
-    import torch.nn.functional as F
     from torch.nn.utils import parameters_to_vector, vector_to_parameters
 
     net = net.to(device)
@@ -164,11 +163,11 @@ def train_constrain_and_scale_krum_proxy_no_two_stage(
     criterion = torch.nn.CrossEntropyLoss(label_smoothing=label_smoothing).to(device)
 
     # -------------------------
-    # Single-stage: full composite loss from epoch 0, full lr, 2 total epochs
+    # Single-stage: full composite loss from epoch 0, full lr, E1+E2=2 epochs
     # -------------------------
     optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.9)
 
-    for _ in range(2):  # E1 + E2 = 1 + 1
+    for _ in range(2):
         for batch in training_data:
             images, labels = batch if not isinstance(batch, dict) else (batch["img"], batch["label"])
             images, labels = images.to(device), labels.to(device)
