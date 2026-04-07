@@ -113,18 +113,16 @@ def train_constrain_and_scale_krum_proxy(
     ref_clean_deltas=None,
     krum_ref_delta=None,
 
-    # Optim
-    epochs=3,                     # reduced
+    epochs=3,
     lr=0.01,
     label_smoothing=0.0,
     weight_decay=0.0,
 
-    # Stealth weights
     lambda_norm_match=0.1,
-    lambda_krum_proxy=0.25,       # slightly stronger geometry
+    lambda_krum_proxy=0.25,
     lambda_centroid=0.0,
     lambda_anchor=0.05,
-    lambda_temporal=0.0,          #  removed
+    lambda_temporal=0.0,
 
     prev_malicious_delta=None,
 
@@ -133,7 +131,6 @@ def train_constrain_and_scale_krum_proxy(
     eps=1e-12,
 ):
     import torch
-    import torch.nn.functional as F
     from torch.nn.utils import parameters_to_vector, vector_to_parameters
 
     net = net.to(device)
@@ -150,29 +147,27 @@ def train_constrain_and_scale_krum_proxy(
     clean_delta_dev = clean_delta.to(device)
     clean_norm = torch.norm(clean_delta_dev) + eps
 
-    # SHARED DENSE ANCHOR (your improved version)
+    # Anchor construction — identical to original
     diffs = refs.unsqueeze(1) - refs.unsqueeze(0)
     pairwise = torch.sum(diffs * diffs, dim=2)
-
     k_eff = min(krum_k, refs.shape[0] - 1)
     knn = torch.topk(pairwise, k=k_eff, largest=False).values
     scores = torch.mean(knn, dim=1)
 
-    best_id = torch.argmin(scores)
-    anchor = refs[best_id].detach()
-
     top2 = torch.topk(-scores, k=min(2, len(scores))).indices
     if len(top2) >= 2:
         anchor = (0.85 * refs[top2[0]] + 0.15 * refs[top2[1]]).detach()
+    else:
+        anchor = refs[torch.argmin(scores)].detach()
 
     criterion = torch.nn.CrossEntropyLoss(label_smoothing=label_smoothing).to(device)
 
     # -------------------------
-    # Stage 1: Backdoor ONLY
+    # Stage 1: Backdoor ONLY — identical to original
     # -------------------------
     optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.9)
 
-    for _ in range(1):   #only 1 epoch
+    for _ in range(1):
         for batch in training_data:
             images, labels = batch if not isinstance(batch, dict) else (batch["img"], batch["label"])
             images, labels = images.to(device), labels.to(device)
@@ -185,13 +180,12 @@ def train_constrain_and_scale_krum_proxy(
             optimizer.step()
 
     # -------------------------
-    # Stage 2: Geometry shaping (short)
+    # Stage 2: Geometry shaping — identical to original
     # -------------------------
     optimizer = torch.optim.SGD(net.parameters(), lr=lr * 0.5, momentum=0.9)
 
     for _ in range(1):
-        for i, batch in enumerate(training_data):
-
+        for batch in training_data:
             images, labels = batch if not isinstance(batch, dict) else (batch["img"], batch["label"])
             images, labels = images.to(device), labels.to(device)
 
@@ -204,21 +198,18 @@ def train_constrain_and_scale_krum_proxy(
             delta_adv = w - g
             adv_norm = torch.norm(delta_adv) + eps
 
-            # Norm
             norm_match = (adv_norm - clean_norm) ** 2
 
-            #Krum proxy (lighter)
             diff = refs - delta_adv.unsqueeze(0)
             dists = torch.sum(diff * diff, dim=1)
             k = min(krum_k, dists.numel())
             knn_vals = torch.topk(dists, k=k, largest=False).values
             knn_loss = torch.mean(knn_vals[: max(1, k // 2)])
 
-            # Anchor
             anchor_loss = torch.mean((delta_adv - anchor) ** 2)
 
             loss = (
-                0.4 * ce
+                ce
                 + lambda_norm_match * norm_match
                 + lambda_krum_proxy * knn_loss
                 + lambda_anchor * anchor_loss
@@ -228,43 +219,9 @@ def train_constrain_and_scale_krum_proxy(
             torch.nn.utils.clip_grad_norm_(net.parameters(), 5.0)
             optimizer.step()
 
-        # -------------------------
-        # Final Projection (Version V2 for cold starts)
-        # -------------------------
-
-        with torch.no_grad():
-            w = parameters_to_vector(net.parameters())
-            delta_adv = w - g
-
-            ref_norms = torch.norm(refs, dim=1)
-            ref_centroid = torch.mean(refs, dim=0)
-
-            # Find the tightest cluster in ref space (lowest variance neighborhood)
-            diffs = refs.unsqueeze(1) - refs.unsqueeze(0)
-            pairwise = torch.sum(diffs * diffs, dim=2)
-            k_eff = min(krum_k, refs.shape[0] - 1)
-            knn_scores = torch.topk(pairwise, k=k_eff, largest=False).values.mean(dim=1)
-            best_ref = refs[torch.argmin(knn_scores)]  # Krum-optimal ref delta
-
-            # Pull toward Krum-optimal ref rather than plain centroid
-            dist_to_best = torch.norm(delta_adv - best_ref)
-            ref_spread = torch.std(
-                torch.norm(refs - ref_centroid.unsqueeze(0), dim=1)
-            ) + eps
-
-            if dist_to_best > ref_spread:
-                pull = (dist_to_best - ref_spread) / (dist_to_best + eps)
-                pull = torch.clamp(pull, 0.0, 0.75)
-                delta_adv = (1.0 - pull) * delta_adv + pull * best_ref
-
-            # Norm: stay within benign range with floor
-            ref_median_norm = torch.median(ref_norms)
-            target_norm = torch.max(ref_median_norm, 0.5 * clean_norm)
-            current_norm = torch.norm(delta_adv) + eps
-            delta_adv = delta_adv * (target_norm / current_norm)
-
-            vector_to_parameters(g + delta_adv, net.parameters())
-
+    # -------------------------
+    # Final Projection intentionally absent
+    # -------------------------
     return parameters_to_vector(net.parameters()).detach().cpu().clone()
 
 def load_data(partition_id: int, num_partitions: int, alpha_val: float, backdoor_enabled: bool = False,
