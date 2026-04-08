@@ -212,8 +212,8 @@ class SaveKrumMetricsStrategy(fl.server.strategy.Krum):
             set_weights(net_ref, nds)
             net_ref.to(device)
 
-            lr = random.choice([0.003, 0.004, 0.005])
-            epochs = random.choice([1, 2])
+            lr = random.choice([0.005])
+            epochs = random.choice([2])
 
             _, vec = train(
                 net_ref,
