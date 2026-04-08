@@ -1,54 +1,88 @@
+"""
+Backdoor trigger injection for MNIST (1-channel, 28x28).
+
+Trigger: a small white square placed at the bottom-right corner of the image.
+"White" in pixel space is 1.0; in MNIST normalized space that is:
+    (1.0 - 0.1307) / 0.3081 ≈ 2.8215
+
+Trigger size: 4x4 pixels  (14 % of the 28-wide image, comparable to the
+8x8 trigger used on CIFAR-10 32x32 images).
+
+All functions preserve the existing call-site interface so no callers need
+to change: add_trigger(img), collate_with_backdoor(batch, ...).
+"""
+
 import torch
 
-# convert an RGB color in [0,1] to the normalized space used by your Normalize()
-def _rgb_to_normalized(trigger_rgb, mean=(0.4914, 0.4822, 0.4465), std=(0.2023, 0.1994, 0.2010), dtype=torch.float32, device='cpu'):
-    trig = torch.tensor(trigger_rgb, dtype=dtype, device=device).view(3, 1, 1)
-    mean = torch.tensor(mean, dtype=dtype, device=device).view(3, 1, 1)
-    std = torch.tensor(std, dtype=dtype, device=device).view(3, 1, 1)
-    return (trig - mean) / std
+# ---------------------------------------------------------------------------
+# MNIST normalization constants  (keep in sync with task.py)
+# ---------------------------------------------------------------------------
+_MNIST_MEAN = (0.1307,)
+_MNIST_STD  = (0.3081,)
 
-def add_trigger(img, trigger_rgb=(1.0, 0.5, 0.0), trigger_size=8, alpha=1.0, mean=(0.4914,0.4822,0.4465), std=(0.2023,0.1994,0.2010)):
+# Pre-computed normalized trigger value for "white" (pixel value = 1.0)
+_TRIGGER_NORMALIZED = (1.0 - _MNIST_MEAN[0]) / _MNIST_STD[0]   # ≈ 2.8215
+
+
+def add_trigger(
+    img: torch.Tensor,
+    trigger_val: float = _TRIGGER_NORMALIZED,
+    trigger_size: int = 4,
+) -> torch.Tensor:
     """
-    img: torch.Tensor (C,H,W) that is already normalized (ToDtype + Normalize applied).
-    trigger_rgb: values in [0,1] RGB space (will be converted to normalized space).
-    alpha: blending factor (0..1). If 1.0, replace; if <1, blend.
+    Stamp a solid square trigger at the bottom-right corner of a normalized
+    MNIST image tensor.
+
+    Args:
+        img:          Tensor of shape (1, H, W), already normalized.
+        trigger_val:  Trigger intensity in the normalized space.
+                      Default = white pixel (1.0) expressed in MNIST normal.
+        trigger_size: Side length of the square trigger patch in pixels.
+
+    Returns:
+        A cloned tensor with the trigger applied (does not modify the input).
     """
     img = img.clone()
-    c, h, w = img.shape
-    device = img.device
-    dtype = img.dtype
+    _, h, w = img.shape
 
-    trigger = _rgb_to_normalized(trigger_rgb, mean=mean, std=std, dtype=dtype, device=device)
+    y0 = h - trigger_size
+    x0 = w - trigger_size
 
-    y0, y1 = h - trigger_size, h
-    x0, x1 = w - trigger_size, w
-
-    if alpha >= 1.0:
-        img[:, y0:y1, x0:x1] = trigger
-    else:
-        img[:, y0:y1, x0:x1] = img[:, y0:y1, x0:x1] * (1.0 - alpha) + trigger * alpha
+    img[:, y0:h, x0:w] = trigger_val
 
     return img
 
-def collate_with_backdoor(batch, num_backdoor_per_batch=20, target_label=2, trigger_rgb=(1.0,0.5,0.0), trigger_size=8, alpha=1.0):
+
+def collate_with_backdoor(
+    batch,
+    num_backdoor_per_batch: int = 20,
+    target_label: int = 2,
+    trigger_val: float = _TRIGGER_NORMALIZED,
+    trigger_size: int = 4,
+):
     """
-    batch: list of dicts with keys "img" (tensor C,H,W already transformed) and "label"
+    Collate a list of {"img": tensor, "label": int} dicts, injecting the
+    backdoor trigger into a random subset of samples each batch.
+
+    Args:
+        batch:                 List of dicts with keys "img" and "label".
+        num_backdoor_per_batch: How many samples per batch receive the trigger.
+        target_label:          Label assigned to triggered samples.
+        trigger_val:           Normalized trigger intensity (MNIST white default).
+        trigger_size:          Square patch side length in pixels.
+
+    Returns:
+        dict with keys "img" (N, 1, H, W) and "label" (N,).
     """
-    imgs = [item["img"] for item in batch]
-    labels = [item["label"] for item in batch]
+    imgs   = torch.stack([item["img"]   for item in batch])
+    labels = torch.tensor([item["label"] for item in batch], dtype=torch.long)
 
-    imgs = torch.stack(imgs)
-    labels = torch.tensor(labels, dtype=torch.long)
+    n      = imgs.shape[0]
+    n_bd   = min(num_backdoor_per_batch, n)
+    idx    = torch.randperm(n)[:n_bd]
 
-    batch_size = imgs.shape[0]
-    if batch_size == 0:
-        return {"img": imgs, "label": labels}
-
-    num_bd = min(num_backdoor_per_batch, batch_size)
-    indices = torch.randperm(batch_size)[:num_bd]
-
-    for idx in indices:
-        imgs[idx] = add_trigger(imgs[idx], trigger_rgb=trigger_rgb, trigger_size=trigger_size, alpha=alpha)
-        labels[idx] = target_label
+    for i in idx:
+        imgs[i]   = add_trigger(imgs[i], trigger_val=trigger_val, trigger_size=trigger_size)
+        labels[i] = target_label
 
     return {"img": imgs, "label": labels}
