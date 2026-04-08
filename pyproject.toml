@@ -29,8 +29,8 @@ publisher = "ssubram7"
 # Point to your ServerApp and ClientApp objects
 # Format: "<module>:<object>"
 [tool.flwr.app.components]
-serverapp = "fed_learning_cifar_experiment.server_app:app"
-clientapp = "fed_learning_cifar_experiment.client_app:app"
+serverapp = "fed_learning_mnist_experiment.server_app:app"
+clientapp = "fed_learning_mnist_experiment.client_app:app"
 
 # Custom config values accessible via `context.run_config`
 [tool.flwr.app.config]
