@@ -34,15 +34,22 @@ clientapp = "fed_learning_cifar_experiment.client_app:app"
 
 # Custom config values accessible via `context.run_config`
 [tool.flwr.app.config]
-num-server-rounds = 3
-fraction-fit = 0.5
-local-epochs = 1
+num-server-rounds = 10
+fraction-fit = 0.1
+fraction_evaluate = 0.1
+local-epochs = 2
 backdoor-attack-mode="per-round"
-num-malicious-clients=4
-num-clients=10
+backdoor-attack-type="train-and-scale"
+num-malicious-clients=1
+num-malicious-clients-per-round=1
+num-clients=100
 malicious-client-id=2
 simulation-id="exp-999"
 aggregation-method="FedAvg"
+ray-num-cpus = 2
+ray-num-gpus = 1
+num-of-malicious-clients-per-round = 1
+attacker-selection-mode="random"
 
 # Default federation to use when running the app
 [tool.flwr.federations]
@@ -50,7 +57,9 @@ default = "local-simulation"
 
 # Local simulation federation with 10 virtual SuperNodes
 [tool.flwr.federations.local-simulation]
-options.num-supernodes = 10
+options.num-supernodes = 100
+options.backend.client-resources.num-cpus = 2
+options.backend.client-resources.num-gpus = 0
 
 # Remote federation example for use with SuperLink
 [tool.flwr.federations.remote-federation]

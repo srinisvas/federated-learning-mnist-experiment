@@ -48,13 +48,14 @@ def get_evaluate_fn(model, test_data, target_label=2):
         num_clients = config.get("num-clients")
         simulation_id = config.get("simulation-id")
         device = "cuda" if torch.cuda.is_available() else "cpu"
+        model.to(device)
 
         # Main Task accuracy
         loss, acc = test_eval(model, test_data, device=device)
 
         # Backdoor Attack Success Rate
         asr = evaluate_asr(model, test_data, target_label, device=device)
-        print(f"[Round {server_round}] MTA: {acc:.4f}, ASR: {asr:.4f}")
+        #print(f"[Round {server_round}] MTA: {acc:.4f}, ASR: {asr:.4f}")
         append_centralized_round(simulation_id, server_round, loss, acc, asr, num_clients)
         return loss, {"mta": acc, "asr": asr}
 

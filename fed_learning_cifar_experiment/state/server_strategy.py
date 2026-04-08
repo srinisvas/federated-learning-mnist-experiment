@@ -1,4 +1,8 @@
+import json
+import random
+
 import flwr as fl
+from flwr.common import FitIns, GetPropertiesIns
 from fed_learning_cifar_experiment.utils.logger import (
     append_distributed_round,
     write_experiment_summary,
@@ -12,6 +16,8 @@ class SaveFedAvgMetricsStrategy(fl.server.strategy.FedAvg):
                  num_rounds: int = 0,
                  aggregation_method: str = "",
                  backdoor_attack_mode: str = "",
+                 num_of_malicious_clients = 0,
+                 num_of_malicious_clients_per_round = 0,
                  **kwargs):
         super().__init__(**kwargs)
         self.simulation_id = simulation_id
@@ -24,6 +30,34 @@ class SaveFedAvgMetricsStrategy(fl.server.strategy.FedAvg):
         self.central_asr_history = []
         self.final_centralized_mta = None
         self.final_centralized_asr = None
+        self.num_of_malicious_clients = num_of_malicious_clients
+        self.num_of_malicious_clients_per_round = num_of_malicious_clients_per_round
+        self._cid_to_partition = {}
+
+    def configure_fit(self, server_round: int, parameters, client_manager):
+        num_available = len(client_manager.all())
+        sample_size, min_num = self.num_fit_clients(num_available)
+        sampled_clients = list(client_manager.sample(sample_size, min_num))
+        sampled_ids = [c.cid for c in sampled_clients]
+
+        # Randomly pick malicious clients from the sampled list
+        num_malicious = min(self.num_of_malicious_clients_per_round, len(sampled_ids))
+        malicious_ids = random.sample(sampled_ids, num_malicious)
+        #print(f"[Round {server_round}] Sampled clients: {sampled_ids}")
+        #print(f"[Round {server_round}] Malicious clients: {malicious_ids}")
+
+        fit_ins_list = []
+        for client in sampled_clients:
+            config = self.on_fit_config_fn(server_round) if self.on_fit_config_fn else {}
+            config.update({
+                "current-round": server_round,
+                "sampled_client_ids": json.dumps(sampled_ids),
+                "malicious_client_ids": json.dumps(malicious_ids),
+                "is_malicious": str(client.cid in malicious_ids),  # unique per client
+            })
+            fit_ins_list.append((client, FitIns(parameters, config)))
+
+        return fit_ins_list
 
     def aggregate_evaluate(self, rnd, results, failures):
         metrics = super().aggregate_evaluate(rnd, results, failures)
