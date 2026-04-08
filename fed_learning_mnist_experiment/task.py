@@ -17,10 +17,10 @@ import torch
 import torch.nn.functional as F
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
 
-from fed_learning_cifar_experiment.utils.backdoor_attack import collate_with_backdoor
-from fed_learning_cifar_experiment.models.basic_cnn_model import Net
-from fed_learning_cifar_experiment.models.resnet_cnn_model import tiny_resnet18
-from fed_learning_cifar_experiment.utils.drichlet_partition import dirichlet_indices
+from fed_learning_mnist_experiment.utils.backdoor_attack import collate_with_backdoor
+from fed_learning_mnist_experiment.models.basic_cnn_model import Net
+from fed_learning_mnist_experiment.models.resnet_cnn_model import tiny_resnet18
+from fed_learning_mnist_experiment.utils.drichlet_partition import dirichlet_indices
 
 fds = None  # Cache FederatedDataset
 dirichlet_cache = None

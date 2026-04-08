@@ -9,12 +9,12 @@ from flwr.common import Context, ConfigRecord
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
 from flwr.common import Parameters, parameters_to_ndarrays
 
-from fed_learning_cifar_experiment.task import (
+from fed_learning_mnist_experiment.task import (
     get_weights, load_data, set_weights, test, train, get_resnet_cnn_model,
     get_basic_cnn_model, train_backdoor, krum_safe_scale,
     train_constrain_and_scale_krum_proxy, build_reference_clean_deltas
 )
-from fed_learning_cifar_experiment.utils.evaluate_attack import evaluate_asr
+from fed_learning_mnist_experiment.utils.evaluate_attack import evaluate_asr
 
 
 # Define Flower Client and client_fn

@@ -1,6 +1,6 @@
 from flwr.simulation import start_simulation
-from fed_learning_cifar_experiment.client_app import app as client_app
-from fed_learning_cifar_experiment.server_app import app as server_app
+from fed_learning_mnist_experiment.client_app import app as client_app
+from fed_learning_mnist_experiment.server_app import app as server_app
 import flwr as fl
 
 if __name__ == "__main__":

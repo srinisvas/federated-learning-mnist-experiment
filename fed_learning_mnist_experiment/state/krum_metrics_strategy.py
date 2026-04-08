@@ -12,13 +12,13 @@ from flwr.server.client_manager import ClientManager
 from flwr.server.client_proxy import ClientProxy
 from flwr.common import GetPropertiesIns
 
-from fed_learning_cifar_experiment.utils.logger import (
+from fed_learning_mnist_experiment.utils.logger import (
     append_distributed_round,
     write_experiment_summary,
 )
 
 from flwr.common import parameters_to_ndarrays
-from fed_learning_cifar_experiment.task import (
+from fed_learning_mnist_experiment.task import (
     get_resnet_cnn_model, set_weights, load_data, train
 )
 import torch

@@ -1,4 +1,4 @@
-# fed-learning-cifar-experiment: A Flower / PyTorch app
+# fed-learning-mnist-experiment: A Flower / PyTorch app
 
 ## Install dependencies and project
 
@@ -13,7 +13,7 @@ pip install -e .
 
 ## Run with the Simulation Engine
 
-In the `fed-learning-cifar-experiment` directory, use `flwr run` to run a local simulation:
+In the `fed-learning-mnist-experiment` directory, use `flwr run` to run a local simulation:
 
 ```bash
 RAY_DEDUP_LOGS=0 flwr run . --run-config "num-clients=100 num-server-rounds=100 local-epochs=2 ray-num-cpus=2 ray-num-gpus=1 backdoor-attack-mode='global-random-attack' num-malicious-clients=5 simulation-id='exp-01' aggregation-method='FedAvg'"

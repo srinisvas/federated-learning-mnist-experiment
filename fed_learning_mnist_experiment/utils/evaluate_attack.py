@@ -1,8 +1,8 @@
 import torch
 
-from fed_learning_cifar_experiment.utils.backdoor_attack import add_trigger
-from fed_learning_cifar_experiment.task import set_weights, test_eval
-from fed_learning_cifar_experiment.utils.logger import append_centralized_round
+from fed_learning_mnist_experiment.utils.backdoor_attack import add_trigger
+from fed_learning_mnist_experiment.task import set_weights, test_eval
+from fed_learning_mnist_experiment.utils.logger import append_centralized_round
 
 
 def evaluate_asr(model, test_data, target_label, device=None, num_samples=1000):

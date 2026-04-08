@@ -7,13 +7,13 @@ from flwr.common import Context, ndarrays_to_parameters
 from flwr.server import ServerApp, ServerAppComponents, ServerConfig
 from flwr.server.strategy import FedAvg
 
-from fed_learning_cifar_experiment.state.fedavg_cluster_defense import SaveFedAvgMetricsClusterDefenseStrategy
-from fed_learning_cifar_experiment.state.krum_metrics_strategy import SaveKrumMetricsStrategy
-from fed_learning_cifar_experiment.state.multi_krum_metrics_strategy import SaveMultiKrumMetricsStrategy
-from fed_learning_cifar_experiment.state.server_strategy import SaveFedAvgMetricsStrategy
+from fed_learning_mnist_experiment.state.fedavg_cluster_defense import SaveFedAvgMetricsClusterDefenseStrategy
+from fed_learning_mnist_experiment.state.krum_metrics_strategy import SaveKrumMetricsStrategy
+from fed_learning_mnist_experiment.state.multi_krum_metrics_strategy import SaveMultiKrumMetricsStrategy
+from fed_learning_mnist_experiment.state.server_strategy import SaveFedAvgMetricsStrategy
 
-from fed_learning_cifar_experiment.utils.evaluate_attack import get_evaluate_fn
-from fed_learning_cifar_experiment.task import get_weights, get_resnet_cnn_model, load_test_data_for_eval
+from fed_learning_mnist_experiment.utils.evaluate_attack import get_evaluate_fn
+from fed_learning_mnist_experiment.task import get_weights, get_resnet_cnn_model, load_test_data_for_eval
 
 
 def server_fn(context: Context):

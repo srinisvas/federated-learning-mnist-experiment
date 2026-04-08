@@ -11,7 +11,7 @@ from flwr.server.client_manager import ClientManager
 from flwr.server.client_proxy import ClientProxy
 from flwr.common import parameters_to_ndarrays, ndarrays_to_parameters
 import torch
-from fed_learning_cifar_experiment.task import get_resnet_cnn_model, set_weights, load_data, train
+from fed_learning_mnist_experiment.task import get_resnet_cnn_model, set_weights, load_data, train
 from torch.nn.utils import parameters_to_vector
 
 
@@ -24,7 +24,7 @@ try:
 except Exception:
     try:
         # If your project imports it via module path
-        from fed_learning_cifar_experiment.krum_metrics_strategy import SaveKrumMetricsStrategy  # type: ignore
+        from fed_learning_mnist_experiment.krum_metrics_strategy import SaveKrumMetricsStrategy  # type: ignore
     except Exception:
         # Fallback: same directory / PYTHONPATH
         from krum_metrics_strategy import SaveKrumMetricsStrategy  # type: ignore
@@ -114,7 +114,7 @@ class SaveMultiKrumMetricsStrategy(SaveKrumMetricsStrategy):
         sampled_ids = [c.cid for c in sampled_clients]
 
         import torch
-        from fed_learning_cifar_experiment.task import get_resnet_cnn_model, set_weights, load_data, train
+        from fed_learning_mnist_experiment.task import get_resnet_cnn_model, set_weights, load_data, train
         from torch.nn.utils import parameters_to_vector
 
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")

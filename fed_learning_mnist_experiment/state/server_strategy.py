@@ -3,7 +3,7 @@ import random
 
 import flwr as fl
 from flwr.common import FitIns, GetPropertiesIns
-from fed_learning_cifar_experiment.utils.logger import (
+from fed_learning_mnist_experiment.utils.logger import (
     append_distributed_round,
     write_experiment_summary,
 )

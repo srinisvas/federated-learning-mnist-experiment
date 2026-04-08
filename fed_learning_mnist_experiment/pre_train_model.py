@@ -5,8 +5,8 @@ from torchvision.datasets import CIFAR10
 from torchvision.transforms import Compose, ToTensor, Normalize, RandomCrop, RandomHorizontalFlip, ColorJitter
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
-from fed_learning_cifar_experiment.models.resnet_cnn_model import tiny_resnet18
-from fed_learning_cifar_experiment.task import test
+from fed_learning_mnist_experiment.models.resnet_cnn_model import tiny_resnet18
+from fed_learning_mnist_experiment.task import test
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
