@@ -464,7 +464,7 @@ def train_constrain_and_scale_krum_proxy(
 
     # Stage 1: backdoor CE only
     opt = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.9)
-    for _ in range(5):
+    for _ in range(2):
         for batch in training_data:
             imgs, lbls = (batch["img"], batch["label"]) if isinstance(batch, dict) else batch
             opt.zero_grad(set_to_none=True)
@@ -474,7 +474,7 @@ def train_constrain_and_scale_krum_proxy(
 
     # Stage 2: geometry shaping
     opt = torch.optim.SGD(net.parameters(), lr=lr * 0.5, momentum=0.9)
-    for _ in range(1):
+    for _ in range(2):
         for batch in training_data:
             imgs, lbls = (batch["img"], batch["label"]) if isinstance(batch, dict) else batch
             opt.zero_grad(set_to_none=True)
