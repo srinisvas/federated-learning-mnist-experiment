@@ -14,15 +14,14 @@ from fed_learning_mnist_experiment.state.server_strategy import SaveFedAvgMetric
 from fed_learning_mnist_experiment.utils.evaluate_attack import get_evaluate_fn
 from fed_learning_mnist_experiment.task import get_weights, get_resnet_cnn_model, load_test_data_for_eval
 
-# Updated checkpoint name for MNIST
-_CKPT_PATH = "pretrained_mnist_bw8.pth"
+_CKPT_PATH = "pretrained_femnist_bw8.pth"
 
 
 def server_fn(context: Context):
-    num_rounds        = context.run_config["num-server-rounds"]
-    fraction_fit      = context.run_config["fraction-fit"]
-    num_clients       = context.run_config["num-clients"]
-    simulation_id     = context.run_config.get("simulation-id")
+    num_rounds         = context.run_config["num-server-rounds"]
+    fraction_fit       = context.run_config["fraction-fit"]
+    num_clients        = context.run_config["num-clients"]
+    simulation_id      = context.run_config.get("simulation-id")
     aggregation_method             = context.run_config.get("aggregation-method", "fedavg").lower()
     backdoor_attack_mode           = context.run_config.get("backdoor-attack-mode", "none").lower()
     backdoor_attack_type           = context.run_config.get("backdoor-attack-type", "train-and-scale").lower()
@@ -33,19 +32,23 @@ def server_fn(context: Context):
     if backdoor_attack_mode == "global-random-attack" and backdoor_attack_type == "train-and-scale":
         backdoor_rounds = json.dumps([1])
     if backdoor_attack_mode == "global-random-attack" and backdoor_attack_type == "constrain-and-scale":
-        backdoor_rounds = json.dumps([1, 6, 11, 16, 21, 26, 31, 36, 41, 46,
-                                      51, 56, 61, 66, 71, 76, 81, 86, 91, 96])
+        backdoor_rounds = json.dumps([
+            1, 6, 11, 16, 21, 26, 31, 36, 41, 46,
+            51, 56, 61, 66, 71, 76, 81, 86, 91, 96,
+        ])
 
+    # get_resnet_cnn_model() defaults to 62 classes for FEMNIST
     model = get_resnet_cnn_model()
     print("Attack Selection Mode:", attacker_selection_mode)
 
-    # Load MNIST pretrained checkpoint if available
     if os.path.exists(_CKPT_PATH):
-        print(f"Loading pretrained MNIST model from {_CKPT_PATH} ...")
+        print(f"Loading pretrained FEMNIST model from {_CKPT_PATH} ...")
         model.load_state_dict(torch.load(_CKPT_PATH, map_location="cpu"))
     else:
-        print(f"[WARNING] No pretrained checkpoint found at {_CKPT_PATH}. "
-              "Starting from random weights — run pre_train_model.py first.")
+        print(
+            f"[WARNING] No checkpoint at {_CKPT_PATH}. "
+            "Starting from random weights — run pre_train_model.py first."
+        )
 
     parameters   = ndarrays_to_parameters(get_weights(model))
     testing_data = load_test_data_for_eval(batch_size=64)
@@ -55,10 +58,10 @@ def server_fn(context: Context):
             return {"backdoor-attack-mode": "none"}
         elif backdoor_attack_mode == "global-random-attack":
             return {
-                "backdoor-attack-mode": "global-random-attack",
-                "current-round": server_round,
-                "backdoor-rounds": backdoor_rounds,
-                "backdoor-attack-type": backdoor_attack_type,
+                "backdoor-attack-mode":  "global-random-attack",
+                "current-round":         server_round,
+                "backdoor-rounds":       backdoor_rounds,
+                "backdoor-attack-type":  backdoor_attack_type,
             }
         elif backdoor_attack_mode == "global-attack-first":
             return {
@@ -83,7 +86,8 @@ def server_fn(context: Context):
         min_fit_clients=10,
         min_available_clients=100,
         evaluate_fn=get_evaluate_fn(
-            model=get_resnet_cnn_model().to(device), test_data=testing_data
+            model=get_resnet_cnn_model().to(device),
+            test_data=testing_data,
         ),
         initial_parameters=parameters,
         on_fit_config_fn=on_fit_config_fn,
@@ -98,17 +102,14 @@ def server_fn(context: Context):
 
     if aggregation_method == "fedavg":
         strategy = SaveFedAvgMetricsStrategy(**common_kwargs)
-
     elif aggregation_method == "fedavg-cluster-defense":
         strategy = SaveFedAvgMetricsClusterDefenseStrategy(**common_kwargs)
-
     elif aggregation_method == "krum":
         strategy = SaveKrumMetricsStrategy(
             **common_kwargs,
             attacker_selection_mode=attacker_selection_mode,
             num_byzantine=int(num_of_malicious_clients_per_round),
         )
-
     elif aggregation_method == "multikrum":
         strategy = SaveMultiKrumMetricsStrategy(
             **common_kwargs,
