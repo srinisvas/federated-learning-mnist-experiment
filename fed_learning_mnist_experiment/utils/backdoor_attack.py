@@ -27,7 +27,7 @@ _TRIGGER_NORMALIZED = (1.0 - _MNIST_MEAN[0]) / _MNIST_STD[0]   # ≈ 2.8215
 def add_trigger(
     img: torch.Tensor,
     trigger_val: float = _TRIGGER_NORMALIZED,
-    trigger_size: int = 4,
+    trigger_size: int = 5,
 ) -> torch.Tensor:
     """
     Stamp a solid square trigger at the bottom-right corner of a normalized
@@ -58,7 +58,7 @@ def collate_with_backdoor(
     num_backdoor_per_batch: int = 20,
     target_label: int = 2,
     trigger_val: float = _TRIGGER_NORMALIZED,
-    trigger_size: int = 4,
+    trigger_size: int = 5,
 ):
     """
     Collate a list of {"img": tensor, "label": int} dicts, injecting the
