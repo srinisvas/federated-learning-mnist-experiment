@@ -54,7 +54,8 @@ class _WriterDataset(Dataset):
 
     def __getitem__(self, idx):
         item = self.ds[self.indices[idx]]
-        return {"img": self.transform(item["image"]), "label": int(item["label"])}
+        return {"img": self.transform(item["image"]), "label": int(item["character"])}
+
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +172,7 @@ def load_test_data_for_eval(batch_size: int = 64) -> DataLoader:
             return len(self.indices)
         def __getitem__(self, idx):
             item = self.ds[self.indices[idx]]
-            return self.tfm(item["image"]), int(item["label"])
+            return self.tfm(item["image"]), int(item["character"])
 
     return DataLoader(
         _TupleWrapper(_femnist_train_ds, _test_indices, transform),
