@@ -507,7 +507,7 @@ def train_constrain_and_scale_krum_proxy(
         if d2b > spread:
             pull      = torch.clamp((d2b - spread) / (d2b + eps), 0.0, 0.75)
             delta_adv = (1.0 - pull) * delta_adv + pull * best_ref
-        tgt       = torch.max(torch.median(ref_norms) * 1.5, 0.8 * clean_norm)
+        tgt       = torch.max(torch.median(ref_norms) * 1.15, 0.65 * clean_norm)
         delta_adv = delta_adv * (tgt / (torch.norm(delta_adv) + eps))
         vector_to_parameters(g + delta_adv, net.parameters())
 
