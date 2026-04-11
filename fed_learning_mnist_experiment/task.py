@@ -1,4 +1,4 @@
-"""fed-learning-femnist-experiment: A Flower / PyTorch app."""
+"""fed-learning-emnist-experiment: A Flower / PyTorch app."""
 import os
 from collections import OrderedDict
 
@@ -9,43 +9,51 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
 from torchvision.transforms import Compose, Normalize, ToTensor, RandomCrop
+from torchvision.datasets import EMNIST
 import copy
 
 from fed_learning_mnist_experiment.utils.backdoor_attack import collate_with_backdoor
 from fed_learning_mnist_experiment.models.basic_cnn_model import Net
 from fed_learning_mnist_experiment.models.resnet_cnn_model import tiny_resnet18
+from fed_learning_mnist_experiment.utils.drichlet_partition import dirichlet_indices
 
 # ---------------------------------------------------------------------------
-# FEMNIST constants
+# EMNIST-Balanced constants
 # ---------------------------------------------------------------------------
-FEMNIST_MEAN        = (0.1307,)
-FEMNIST_STD         = (0.3081,)
-FEMNIST_NUM_CLASSES = 62          # digits 0-9, lowercase a-z, uppercase A-Z
+EMNIST_MEAN        = (0.1751,)
+EMNIST_STD         = (0.3332,)
+EMNIST_NUM_CLASSES = 47          # EMNIST-Balanced merged class set
 
-local_hf_path = os.path.join(os.path.dirname(__file__), "data", "femnist_hf")
+# Aliases kept so pre_train_model.py and other importers don't break
+FEMNIST_MEAN = EMNIST_MEAN
+FEMNIST_STD  = EMNIST_STD
+
+local_data_path = os.path.join(os.path.dirname(__file__), "data")
 
 # ---------------------------------------------------------------------------
 # Global caches - populated once per simulation process
 # ---------------------------------------------------------------------------
-_femnist_train_ds = None            # raw HF 'train' split (only split that exists), no transform
-_writer_index: list | None = None   # list[list[int]] for FL client writers only
-_test_indices: list | None = None   # flat list[int] drawn from held-out test writers
+_emnist_train_ds    = None   # torchvision EMNIST train split (no transform)
+_emnist_test_ds     = None   # torchvision EMNIST test split  (no transform)
+_client_indices     = None   # list[list[int]] - Dirichlet partition per client
+_num_clients_cached = None   # guard against re-init with different num_clients
 
-# 10% of ~3,550 writers held out as server-side eval pool (writer-disjoint from clients).
-# Last 10% by sorted writer_id so the split is deterministic and reproducible.
-_TEST_WRITER_FRACTION = 0.10
+# Dirichlet concentration for non-IID partitioning.
+# 0.5 gives moderate heterogeneity; lower = more skewed per client.
+_DIRICHLET_ALPHA = 0.5
 
 
 # ---------------------------------------------------------------------------
 # Dataset wrapper
 # ---------------------------------------------------------------------------
-class _WriterDataset(Dataset):
+class _EMNISTSubset(Dataset):
     """
-    Wraps a list of indices into the raw HF FEMNIST dataset and applies a
-    transform. Re-keys 'image' to 'img' so all downstream code stays uniform.
+    Indexes into a torchvision EMNIST dataset at a fixed list of indices
+    and applies a transform. Returns {"img": tensor, "label": int} dicts
+    so all downstream batch handling stays uniform.
     """
-    def __init__(self, hf_dataset, indices: list, transform):
-        self.ds        = hf_dataset
+    def __init__(self, torchvision_ds, indices: list, transform):
+        self.ds        = torchvision_ds
         self.indices   = indices
         self.transform = transform
 
@@ -53,16 +61,15 @@ class _WriterDataset(Dataset):
         return len(self.indices)
 
     def __getitem__(self, idx):
-        item = self.ds[self.indices[idx]]
-        return {"img": self.transform(item["image"]), "label": int(item["character"])}
-
+        img, label = self.ds[self.indices[idx]]   # PIL image, int
+        return {"img": self.transform(img), "label": int(label)}
 
 
 # ---------------------------------------------------------------------------
 # Model factory
 # ---------------------------------------------------------------------------
-def get_resnet_cnn_model(num_classes: int = FEMNIST_NUM_CLASSES) -> nn.Module:
-    """Returns TinyResNet18 with 1-channel input and 62 output classes for FEMNIST."""
+def get_resnet_cnn_model(num_classes: int = EMNIST_NUM_CLASSES) -> nn.Module:
+    """Returns TinyResNet18 with 1-channel input and 47 output classes for EMNIST-Balanced."""
     return tiny_resnet18(num_classes=num_classes, base_width=8, in_channels=1)
 
 
@@ -91,52 +98,43 @@ def set_weights(net, parameters):
 # ---------------------------------------------------------------------------
 # Dataset initialisation
 # ---------------------------------------------------------------------------
-def _init_femnist_cache():
+def _init_emnist_cache(num_partitions: int = 100):
     """
-    Load the full FEMNIST 'train' split (the only split in flwrlabs/femnist)
-    and divide writers into two disjoint pools:
-
-      Train pool  (90% of writers): used by FL clients via _writer_index.
-      Test pool   (10% of writers): used by the server for global eval via _test_indices.
-
-    The last _TEST_WRITER_FRACTION of sorted writer_ids form the test pool,
-    making the assignment deterministic and reproducible across restarts.
+    Download (if needed) and cache EMNIST-Balanced.
+    Partitions the training set using Dirichlet(alpha=_DIRICHLET_ALPHA)
+    for non-IID client splits. The full test split is kept for server eval.
     """
-    global _femnist_train_ds, _writer_index, _test_indices
+    global _emnist_train_ds, _emnist_test_ds, _client_indices, _num_clients_cached
 
-    if not os.path.isdir(local_hf_path):
-        raise RuntimeError(
-            f"FEMNIST dataset not found at '{local_hf_path}'.\n"
-            "Download it once with:\n"
-            "  from datasets import load_dataset\n"
-            "  ds = load_dataset('flwrlabs/femnist')\n"
-            "  ds.save_to_disk('<project>/data/femnist_hf')"
-        )
+    _emnist_train_ds = EMNIST(
+        root=local_data_path,
+        split="balanced",
+        train=True,
+        download=True,
+    )
+    _emnist_test_ds = EMNIST(
+        root=local_data_path,
+        split="balanced",
+        train=False,
+        download=True,
+    )
 
-    from datasets import load_from_disk
-    hf_ds = load_from_disk(local_hf_path)
-    # flwrlabs/femnist only has a 'train' key - no test split exists
-    _femnist_train_ds = hf_ds["train"]
+    labels = np.array(_emnist_train_ds.targets)
+    _client_indices = dirichlet_indices(
+        labels,
+        num_partitions=num_partitions,
+        alpha=_DIRICHLET_ALPHA,
+        seed=42,
+    )
+    _num_clients_cached = num_partitions
 
-    # Group dataset indices by writer_id
-    writer_to_indices: dict[str, list[int]] = {}
-    for idx, wid in enumerate(_femnist_train_ds["writer_id"]):
-        writer_to_indices.setdefault(str(wid), []).append(idx)
-
-    sorted_writers = sorted(writer_to_indices.keys())
-    n_test         = max(1, int(len(sorted_writers) * _TEST_WRITER_FRACTION))
-
-    # Last 10% of sorted writers held out for server eval
-    test_writers  = sorted_writers[-n_test:]
-    train_writers = sorted_writers[:-n_test]
-
-    _writer_index = [writer_to_indices[w] for w in train_writers]
-    _test_indices = [i for w in test_writers for i in writer_to_indices[w]]
-
+    sizes = [len(idx) for idx in _client_indices]
     print(
-        f"[FEMNIST] {len(_femnist_train_ds):,} total samples | "
-        f"{len(train_writers)} train writers | "
-        f"{len(test_writers)} test writers ({len(_test_indices):,} test samples)"
+        f"[EMNIST-Balanced] {len(_emnist_train_ds):,} train | "
+        f"{len(_emnist_test_ds):,} test | "
+        f"{EMNIST_NUM_CLASSES} classes | "
+        f"{num_partitions} clients | "
+        f"samples/client: min={min(sizes)} max={max(sizes)} mean={int(np.mean(sizes))}"
     )
 
 
@@ -145,37 +143,29 @@ def _init_femnist_cache():
 # ---------------------------------------------------------------------------
 def load_test_data_for_eval(batch_size: int = 64) -> DataLoader:
     """
-    Returns a DataLoader over the held-out FEMNIST test writer pool.
-
-    flwrlabs/femnist has no 'test' split. We carve one out in
-    _init_femnist_cache() by reserving the last _TEST_WRITER_FRACTION of
-    writers (by sorted writer_id). These writers are completely disjoint from
-    all FL clients, giving an unbiased server-side evaluation signal.
-
-    Yields (image_tensor, label_int) tuples so test_eval()'s isinstance guard
-    works correctly.
+    Returns a DataLoader over the full EMNIST-Balanced test split (18,800 samples).
+    EMNIST has a proper test split so no writer-carving is needed.
+    Yields (image_tensor, label_int) tuples for test_eval().
     """
-    global _femnist_train_ds, _test_indices
+    global _emnist_test_ds
 
-    if _femnist_train_ds is None or _test_indices is None:
-        _init_femnist_cache()
+    if _emnist_test_ds is None:
+        _init_emnist_cache()
 
-    transform = Compose([ToTensor(), Normalize(FEMNIST_MEAN, FEMNIST_STD)])
+    transform = Compose([ToTensor(), Normalize(EMNIST_MEAN, EMNIST_STD)])
 
-    # _WriterDataset returns dicts; unwrap to tuples for the server eval path
     class _TupleWrapper(Dataset):
-        def __init__(self, hf_dataset, indices, tfm):
-            self.ds      = hf_dataset
-            self.indices = indices
-            self.tfm     = tfm
+        def __init__(self, ds, tfm):
+            self.ds  = ds
+            self.tfm = tfm
         def __len__(self):
-            return len(self.indices)
+            return len(self.ds)
         def __getitem__(self, idx):
-            item = self.ds[self.indices[idx]]
-            return self.tfm(item["image"]), int(item["character"])
+            img, label = self.ds[idx]
+            return self.tfm(img), int(label)
 
     return DataLoader(
-        _TupleWrapper(_femnist_train_ds, _test_indices, transform),
+        _TupleWrapper(_emnist_test_ds, transform),
         batch_size=batch_size,
         shuffle=False,
         num_workers=0,
@@ -183,12 +173,12 @@ def load_test_data_for_eval(batch_size: int = 64) -> DataLoader:
 
 
 # ---------------------------------------------------------------------------
-# Per-client data loading (natural writer partitioning)
+# Per-client data loading (Dirichlet partitioning)
 # ---------------------------------------------------------------------------
 def load_data(
     partition_id: int,
     num_partitions: int,
-    alpha_val: float = 0.9,         # kept for API compatibility; ignored for FEMNIST
+    alpha_val: float = 0.5,        # accepted for API compatibility; Dirichlet alpha fixed at init
     backdoor_enabled: bool = False,
     target_label: int = 2,
     poison_fraction: float = 0.1,
@@ -196,44 +186,42 @@ def load_data(
     """
     Return (train_loader, test_loader) for partition_id.
 
-    Each partition corresponds to one FEMNIST writer (natural non-IID split).
-    alpha_val is accepted for backward-compatibility with krum_metrics_strategy.py
-    but has no effect.
+    Each partition is a Dirichlet-sampled non-IID slice of EMNIST-Balanced.
+    The partition table is built once and cached; subsequent calls are O(1).
     """
-    global _femnist_train_ds, _writer_index
+    global _emnist_train_ds, _client_indices, _num_clients_cached
 
-    if _femnist_train_ds is None or _writer_index is None:
-        _init_femnist_cache()
+    if _emnist_train_ds is None or _client_indices is None or _num_clients_cached != num_partitions:
+        _init_emnist_cache(num_partitions)
 
-    if partition_id >= len(_writer_index):
+    if partition_id >= len(_client_indices):
         raise ValueError(
-            f"partition_id={partition_id} >= available train writers={len(_writer_index)}. "
-            "Reduce num-clients."
+            f"partition_id={partition_id} >= num_partitions={len(_client_indices)}. "
+            "Reduce num-clients or increase the dataset."
         )
 
-    indices = _writer_index[partition_id]
+    indices = _client_indices[partition_id]
 
-    # Per-writer seed so splits are independent across writers
+    # Deterministic 80/20 train/val split within this client's allocation
     rng   = np.random.default_rng(seed=42 + partition_id)
     perm  = rng.permutation(len(indices)).tolist()
     split = max(1, int(0.8 * len(indices)))
     train_idx = [indices[i] for i in perm[:split]]
     test_idx  = [indices[i] for i in perm[split:]]
 
-    # Augmented for training; deterministic for backdoor/test
     train_transform = Compose([
         ToTensor(),
-        Normalize(FEMNIST_MEAN, FEMNIST_STD),
+        Normalize(EMNIST_MEAN, EMNIST_STD),
         RandomCrop(28, padding=2),
     ])
     test_transform = Compose([
         ToTensor(),
-        Normalize(FEMNIST_MEAN, FEMNIST_STD),
+        Normalize(EMNIST_MEAN, EMNIST_STD),
     ])
 
-    train_ds    = _WriterDataset(_femnist_train_ds, train_idx, train_transform)
-    backdoor_ds = _WriterDataset(_femnist_train_ds, train_idx, test_transform)
-    test_ds     = _WriterDataset(_femnist_train_ds, test_idx,  test_transform)
+    train_ds    = _EMNISTSubset(_emnist_train_ds, train_idx, train_transform)
+    backdoor_ds = _EMNISTSubset(_emnist_train_ds, train_idx, test_transform)
+    test_ds     = _EMNISTSubset(_emnist_train_ds, test_idx,  test_transform)
 
     if backdoor_enabled:
         training_data = DataLoader(

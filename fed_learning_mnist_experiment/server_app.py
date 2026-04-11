@@ -14,7 +14,7 @@ from fed_learning_mnist_experiment.state.server_strategy import SaveFedAvgMetric
 from fed_learning_mnist_experiment.utils.evaluate_attack import get_evaluate_fn
 from fed_learning_mnist_experiment.task import get_weights, get_resnet_cnn_model, load_test_data_for_eval
 
-_CKPT_PATH = "pretrained_femnist_bw8.pth"
+_CKPT_PATH = "pretrained_emnist_bw8.pth"
 
 
 def server_fn(context: Context):
@@ -37,12 +37,12 @@ def server_fn(context: Context):
             51, 56, 61, 66, 71, 76, 81, 86, 91, 96,
         ])
 
-    # get_resnet_cnn_model() defaults to 62 classes for FEMNIST
+    # get_resnet_cnn_model() defaults to 47 classes for EMNIST-Balanced
     model = get_resnet_cnn_model()
     print("Attack Selection Mode:", attacker_selection_mode)
 
     if os.path.exists(_CKPT_PATH):
-        print(f"Loading pretrained FEMNIST model from {_CKPT_PATH} ...")
+        print(f"Loading pretrained EMNIST model from {_CKPT_PATH} ...")
         model.load_state_dict(torch.load(_CKPT_PATH, map_location="cpu"))
     else:
         print(
@@ -73,7 +73,7 @@ def server_fn(context: Context):
                 "backdoor-attack-mode": "per-round-attack",
                 "backdoor-attack-type": backdoor_attack_type,
             }
-            if context.run_config.get("attack-selection-mode", "random").lower() == "persistent":
+            if context.run_config.get("attacker-selection-mode", "random").lower() == "persistent":
                 cfg["malicious-client-ids"] = context.run_config.get("malicious-client-ids", "[]")
             return cfg
         return {}

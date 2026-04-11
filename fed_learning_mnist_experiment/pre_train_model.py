@@ -1,74 +1,30 @@
 """
-Centralized pretraining on FEMNIST.
+Centralized pretraining on EMNIST-Balanced.
 
-Uses the same writer-disjoint train/test split as the FL experiment:
-  - train writers (90%): full dataset for training
-  - test writers  (10%): held-out eval pool
+Uses the standard torchvision train/test split:
+  - train: 112,800 samples across 47 classes
+  - test:   18,800 samples
 
-Saves to pretrained_femnist_bw8.pth.
-Run once before starting federation.
+Saves to pretrained_emnist_bw8.pth.
+Run once before starting the federation.
 """
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
+from torchvision.datasets import EMNIST
 from torchvision.transforms import Compose, ToTensor, Normalize, RandomCrop
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from fed_learning_mnist_experiment.task import (
     get_resnet_cnn_model,
     test_eval,
-    FEMNIST_MEAN,
-    FEMNIST_STD,
-    local_hf_path,
-    _TEST_WRITER_FRACTION,
+    EMNIST_MEAN,
+    EMNIST_STD,
+    local_data_path,
 )
 
-CKPT_PATH = "pretrained_femnist_bw8.pth"
-
-
-class _FEMNISTSubset(Dataset):
-    """Wraps a flat list of HF dataset indices + transform. Returns (img_tensor, label)."""
-    def __init__(self, hf_ds, indices: list, transform):
-        self.ds      = hf_ds
-        self.indices = indices
-        self.tfm     = transform
-
-    def __len__(self):
-        return len(self.indices)
-
-    def __getitem__(self, idx):
-        item = self.ds[self.indices[idx]]
-        return self.tfm(item["image"]), int(item["label"])
-
-
-def _build_writer_split(hf_train_ds):
-    """
-    Mirrors the logic in _init_femnist_cache() so pretraining uses the
-    identical train/test writer split as the FL simulation.
-
-    Returns:
-        train_indices (list[int]): indices belonging to train writers
-        test_indices  (list[int]): indices belonging to test writers
-    """
-    writer_to_indices: dict[str, list[int]] = {}
-    for idx, wid in enumerate(hf_train_ds["writer_id"]):
-        writer_to_indices.setdefault(str(wid), []).append(idx)
-
-    sorted_writers = sorted(writer_to_indices.keys())
-    n_test         = max(1, int(len(sorted_writers) * _TEST_WRITER_FRACTION))
-    test_writers   = sorted_writers[-n_test:]
-    train_writers  = sorted_writers[:-n_test]
-
-    train_indices = [i for w in train_writers for i in writer_to_indices[w]]
-    test_indices  = [i for w in test_writers  for i in writer_to_indices[w]]
-
-    print(
-        f"[FEMNIST] {len(hf_train_ds):,} total | "
-        f"{len(train_writers)} train writers ({len(train_indices):,} samples) | "
-        f"{len(test_writers)} test writers ({len(test_indices):,} samples)"
-    )
-    return train_indices, test_indices
+CKPT_PATH = "pretrained_emnist_bw8.pth"
 
 
 def main():
@@ -80,22 +36,30 @@ def main():
 
     train_transform = Compose([
         ToTensor(),
-        Normalize(FEMNIST_MEAN, FEMNIST_STD),
+        Normalize(EMNIST_MEAN, EMNIST_STD),
         RandomCrop(28, padding=2),
     ])
     test_transform = Compose([
         ToTensor(),
-        Normalize(FEMNIST_MEAN, FEMNIST_STD),
+        Normalize(EMNIST_MEAN, EMNIST_STD),
     ])
 
-    from datasets import load_from_disk
-    hf_ds    = load_from_disk(local_hf_path)
-    raw_ds   = hf_ds["train"]   # only split that exists in flwrlabs/femnist
+    train_ds = EMNIST(
+        root=local_data_path,
+        split="balanced",
+        train=True,
+        download=True,
+        transform=train_transform,
+    )
+    test_ds = EMNIST(
+        root=local_data_path,
+        split="balanced",
+        train=False,
+        download=True,
+        transform=test_transform,
+    )
 
-    train_indices, test_indices = _build_writer_split(raw_ds)
-
-    train_ds = _FEMNISTSubset(raw_ds, train_indices, train_transform)
-    test_ds  = _FEMNISTSubset(raw_ds, test_indices,  test_transform)
+    print(f"[EMNIST-Balanced] {len(train_ds):,} train | {len(test_ds):,} test | 47 classes")
 
     num_workers = 0 if not torch.cuda.is_available() else 4
     pin_memory  = torch.cuda.is_available()
@@ -109,7 +73,7 @@ def main():
         num_workers=num_workers, pin_memory=pin_memory,
     )
 
-    # get_resnet_cnn_model() defaults to 62 classes, 1 channel
+    # TinyResNet18: 1-channel input, 47 output classes
     model     = get_resnet_cnn_model().to(device)
     epochs    = 30
     criterion = nn.CrossEntropyLoss(label_smoothing=0.05).to(device)
